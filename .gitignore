@@ -29,4 +29,5 @@ dist-ssr
 
 .env
 .env.local
-.env*.local
+.env*.localnode_modules/
+dist/
