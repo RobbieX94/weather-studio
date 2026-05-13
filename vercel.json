@@ -3,6 +3,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install",
+<<<<<<< HEAD
   "engines": {
     "node": "22.x"
   },
@@ -10,3 +11,9 @@
     { "source": "/api/weather", "destination": "/api/weather.ts" }
   ]
 }
+=======
+  "rewrites": [
+    { "source": "/api/weather", "destination": "/api/weather.ts" }
+  ]
+}
+>>>>>>> fae086fd10f8ec2fb1cdcb850087b3fad5220c6b

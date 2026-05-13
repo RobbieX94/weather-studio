@@ -15,10 +15,18 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
+<<<<<<< HEAD
     "types": ["vite/client"],
     "forceConsistentCasingInFileNames": true
+=======
+    "types": ["vite/client"]
+>>>>>>> fae086fd10f8ec2fb1cdcb850087b3fad5220c6b
   },
   "include": ["src", "lib/env.d.ts"],
   "exclude": ["node_modules", "lib", "server-backup"]
   
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> fae086fd10f8ec2fb1cdcb850087b3fad5220c6b

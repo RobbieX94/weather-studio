@@ -1,0 +1,160 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  password      String
+  name          String
+  role          String         @default("user")
+  plan          String         @default("freelance")
+  phone         String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  cameras       Camera[]
+  projects      Project[]      @relation("ProjectOwner")
+  teamMembers   TeamMember[]
+  notifications Notification[]
+  invitations   Invitation[]   @relation("InvitationSender")
+  subscription  Subscription?
+  aiAnalyses    AIAnalysis[]
+}
+
+model Camera {
+  id        String   @id @default(cuid())
+  name      String
+  location  String?
+  streamUrl String
+  latitude  Float?
+  longitude Float?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  description String?
+  location    String
+  latitude    Float
+  longitude   Float
+  shootDate   DateTime
+  status      String        @default("active")
+  ownerId     String
+  owner       User          @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  teamMembers TeamMember[]
+  weatherData WeatherData[]
+  aiAnalyses  AIAnalysis[]
+  alerts      Alert[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+model TeamMember {
+  id             String   @id @default(cuid())
+  userId         String
+  projectId      String
+  productionRole String
+  permissions    String   @default("viewer")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([userId, projectId])
+}
+
+model Invitation {
+  id             String   @id @default(cuid())
+  email          String
+  productionRole String
+  permissions    String   @default("viewer")
+  projectId      String
+  senderId       String
+  token          String   @unique @default(cuid())
+  status         String   @default("pending")
+  sender         User     @relation("InvitationSender", fields: [senderId], references: [id], onDelete: Cascade)
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+}
+
+model WeatherData {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  temperature Float
+  feelsLike   Float
+  humidity    Int
+  windSpeed   Float
+  windDeg     Int
+  visibility  Int
+  cloudiness  Int
+  pressure    Int
+  description String
+  icon        String
+  forecast    Json?
+  recordedAt  DateTime @default(now())
+}
+
+model AIAnalysis {
+  id             String   @id @default(cuid())
+  projectId      String
+  userId         String
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  analysis       String
+  suggestions    String
+  weatherSummary String
+  createdAt      DateTime @default(now())
+}
+
+model Alert {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type      String
+  channel   String
+  message   String
+  status    String   @default("sent")
+  sentAt    DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Subscription {
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stripeCustomerId String?   @unique
+  stripeSubId      String?   @unique
+  plan             String    @default("freelance")
+  status           String    @default("active")
+  currentPeriodEnd DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model tenants {
+  id         String    @id @default(dbgenerated("public.uuid_generate_v7()")) @db.Uuid
+  name       String?
+  created    DateTime  @default(dbgenerated("LOCALTIMESTAMP")) @db.Timestamp(6)
+  updated    DateTime  @default(dbgenerated("LOCALTIMESTAMP")) @db.Timestamp(6)
+  deleted    DateTime? @db.Timestamp(6)
+  compute_id String?   @db.Uuid
+}
