@@ -72,3 +72,4 @@ export default defineConfig([
 ])
 ```
 # weather-studio
+# weather-studio
