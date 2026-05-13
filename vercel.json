@@ -5,10 +5,5 @@
   "installCommand": "npm install",
   "rewrites": [
     { "source": "/api/weather", "destination": "/api/weather.ts" }
-  ],
-  "functions": {
-    "api/*.ts": {
-      "runtime": "nodejs22.x"
-    }
-  }
+  ]
 }
