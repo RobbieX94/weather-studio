@@ -1,0 +1,139 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Camera {
+  id          String   @id @default(cuid())
+  name        String
+  streamUrl   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  description String?
+  locationId  String
+  previewUrl  String?
+  status      String   @default("offline")
+}
+
+model Alert {
+  id          String   @id @default(cuid())
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  description String
+  level       String
+  locationId  String
+  title       String
+  updatedAt   DateTime @updatedAt
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("user")
+  plan      String   @default("freelance")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  phone     String?
+}
+
+model Subscription {
+  id               String    @id @default(cuid())
+  userId           String
+  stripeCustomerId String?
+  stripeSubId      String?
+  plan             String    @default("freelance")
+  status           String    @default("active")
+  currentPeriodEnd DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model AIAnalysis {
+  id             String   @id
+  projectId      String
+  userId         String
+  analysis       String
+  suggestions    String
+  weatherSummary String
+  createdAt      DateTime @default(now())
+}
+
+model Invitation {
+  id             String   @id
+  email          String
+  productionRole String
+  permissions    String   @default("viewer")
+  projectId      String
+  senderId       String
+  token          String   @unique
+  status         String   @default("pending")
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id
+  userId    String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Project {
+  id          String   @id
+  name        String
+  description String?
+  location    String
+  latitude    Float
+  longitude   Float
+  shootDate   DateTime
+  status      String   @default("active")
+  ownerId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+}
+
+model TeamMember {
+  id             String   @id
+  userId         String
+  projectId      String
+  productionRole String
+  permissions    String   @default("viewer")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime
+
+  @@unique([userId, projectId])
+}
+
+model WeatherData {
+  id          String   @id
+  projectId   String
+  temperature Float
+  feelsLike   Float
+  humidity    Int
+  windSpeed   Float
+  windDeg     Int
+  visibility  Int
+  cloudiness  Int
+  pressure    Int
+  description String
+  icon        String
+  forecast    Json?
+  recordedAt  DateTime @default(now())
+}
+
+/// This table has subclasses and requires additional setup for migrations. Visit https://pris.ly/d/table-inheritance for more info.
+model tenants {
+  id         String    @id @default(dbgenerated("public.uuid_generate_v7()")) @db.Uuid
+  name       String?
+  created    DateTime  @default(dbgenerated("LOCALTIMESTAMP")) @db.Timestamp(6)
+  updated    DateTime  @default(dbgenerated("LOCALTIMESTAMP")) @db.Timestamp(6)
+  deleted    DateTime? @db.Timestamp(6)
+  compute_id String?   @db.Uuid
+}

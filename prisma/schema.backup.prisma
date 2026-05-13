@@ -1,0 +1,94 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String         @id @default(uuid()) @db.Uuid
+  name          String
+  email         String         @unique
+  password_hash String
+  company       String?
+  role          String?        @default("user")
+  created_at    DateTime       @default(now())
+  projects      Project[]
+  subscriptions Subscription[]
+  payments      PaymentDemo[]
+  notifications Notification[]
+}
+
+model Project {
+  id            String         @id @default(uuid()) @db.Uuid
+  user_id       String         @db.Uuid
+  project_name  String
+  location      String
+  lat           Float
+  lon           Float
+  date          DateTime
+  start_time    String
+  end_time      String
+  type          String
+  risk_level    String         @default("verde")
+  notes         String?
+  created_at    DateTime       @default(now())
+
+  user          User           @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  notifications Notification[]
+
+  @@index([user_id])
+}
+
+model Subscription {
+  id            String   @id @default(uuid()) @db.Uuid
+  user_id       String   @db.Uuid
+  plan          String
+  billing_cycle String
+  status        String   @default("active")
+  created_at    DateTime @default(now())
+
+  user          User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+}
+
+model PaymentDemo {
+  id            String   @id @default(uuid()) @db.Uuid
+  user_id       String   @db.Uuid
+  plan          String
+  billing_cycle String
+  amount        Decimal  @db.Decimal(10, 2)
+  status        String   @default("pending")
+  created_at    DateTime @default(now())
+
+  user          User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+}
+
+model Notification {
+  id         String    @id @default(uuid()) @db.Uuid
+  user_id    String    @db.Uuid
+  project_id String?   @db.Uuid
+  channel    String
+  subject    String
+  body       String
+  status     String    @default("pending")
+  created_at DateTime  @default(now())
+
+  user       User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  project    Project?  @relation(fields: [project_id], references: [id], onDelete: SetNull)
+
+  @@index([user_id])
+  @@index([project_id])
+}
+
+model Location {
+  id        String   @id @default(cuid())
+  name      String
+  latitude  Float
+  longitude Float
+  createdAt DateTime @default(now())
+}
