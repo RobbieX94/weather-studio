@@ -3,14 +3,44 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": "22.x"
+    "node": "20.x"
   },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "prisma:push": "prisma db push"
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vite": "^7.0.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "@google/generative-ai": "^0.24.1",
+    "@phosphor-icons/react": "^2.1.10",
+    "@prisma/client": "^7.8.0",
+    "@supabase/supabase-js": "^2.105.4",
+    "bcryptjs": "^3.0.3",
+    "framer-motion": "^12.38.0",
+    "html2canvas": "^1.4.1",
+    "jsonwebtoken": "^9.0.3",
+    "jspdf": "^4.2.1",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^1.14.0",
+    "mapbox-gl": "^3.23.1",
+    "pg": "^8.20.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-leaflet": "^5.0.0",
+    "react-router-dom": "^7.15.0",
+    "suncalc": "^1.9.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/leaflet": "^1.9.21",
+    "@types/node": "^25.6.2",
+    "@types/pg": "^8.20.0",
+    "@types/suncalc": "^1.9.2",
+    "@vercel/node": "^5.7.15",
+    "prisma": "^7.8.0",
+    "typescript": "^5.8.3"
   }
 }
