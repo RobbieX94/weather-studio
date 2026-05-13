@@ -33,3 +33,9 @@ dist-ssr
 dist/
 
 **/.DS_Store
+
+node_modules
+.env
+dist
+.vercel
+*.log
