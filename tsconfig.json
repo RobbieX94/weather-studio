@@ -16,7 +16,9 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
     "types": ["vite/client"],
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true
   },
   "include": ["src", "lib/env.d.ts"],
   "exclude": ["node_modules", "lib", "server-backup"]
