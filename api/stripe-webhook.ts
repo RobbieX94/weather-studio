@@ -22,23 +22,29 @@ async function buffer(req: VercelRequest): Promise<Buffer> {
   })
 }
 
-async function updateUserPlan(userId: string, plan: string) {
+async function updateUserPlan(userId: string, plan: 'free' | 'basico' | 'freelancepro' | 'studio') {
   if (!userId) return
+
   const { error } = await supabaseAdmin
     .from('profiles')
     .update({ plan })
     .eq('id', userId)
+
   if (error) console.error('Error actualizando plan:', error)
-  else console.log(`✅ Plan actualizado: ${userId} → ${plan}`)
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).end()
 
   let event: Stripe.Event
+
   try {
     const body = await buffer(req)
-    event = stripe.webhooks.constructEvent(body, req.headers['stripe-signature'] as string, process.env.STRIPE_WEBHOOK_SECRET!)
+    event = stripe.webhooks.constructEvent(
+      body,
+      req.headers['stripe-signature'] as string,
+      process.env.STRIPE_WEBHOOK_SECRET!
+    )
   } catch (err: any) {
     console.error('Webhook signature error:', err.message)
     return res.status(400).json({ error: `Webhook error: ${err.message}` })
@@ -46,45 +52,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     switch (event.type) {
-
       case 'checkout.session.completed': {
-        const s = event.data.object as Stripe.Checkout.Session
-        if (s.metadata?.userId && s.metadata?.plan)
-          await updateUserPlan(s.metadata.userId, s.metadata.plan)
+        const session = event.data.object as Stripe.Checkout.Session
+        const userId = session.metadata?.userId
+        const plan = session.metadata?.plan as 'free' | 'basico' | 'freelancepro' | 'studio' | undefined
+        if (userId && plan) await updateUserPlan(userId, plan)
         break
       }
 
       case 'invoice.payment_succeeded': {
-        const inv = event.data.object as Stripe.Invoice
-        const subId = (inv as any).subscription as string
+        const invoice = event.data.object as Stripe.Invoice
+        const subId = (invoice as any).subscription as string
         if (subId) {
-          const sub = await stripe.subscriptions.retrieve(subId)
-          if (sub.metadata?.userId && sub.metadata?.plan)
-            await updateUserPlan(sub.metadata.userId, sub.metadata.plan)
+          const subscription = await stripe.subscriptions.retrieve(subId)
+          const userId = subscription.metadata?.userId
+          const plan = subscription.metadata?.plan as 'free' | 'basico' | 'freelancepro' | 'studio' | undefined
+          if (userId && plan) await updateUserPlan(userId, plan)
         }
         break
       }
 
       case 'invoice.payment_failed': {
-        const inv = event.data.object as Stripe.Invoice
-        const subId = (inv as any).subscription as string
+        const invoice = event.data.object as Stripe.Invoice
+        const subId = (invoice as any).subscription as string
         if (subId) {
-          const sub = await stripe.subscriptions.retrieve(subId)
-          if (sub.metadata?.userId) await updateUserPlan(sub.metadata.userId, 'free')
+          const subscription = await stripe.subscriptions.retrieve(subId)
+          const userId = subscription.metadata?.userId
+          if (userId) await updateUserPlan(userId, 'free')
         }
         break
       }
 
       case 'customer.subscription.deleted': {
-        const sub = event.data.object as Stripe.Subscription
-        if (sub.metadata?.userId) await updateUserPlan(sub.metadata.userId, 'free')
+        const subscription = event.data.object as Stripe.Subscription
+        const userId = subscription.metadata?.userId
+        if (userId) await updateUserPlan(userId, 'free')
         break
       }
 
       case 'customer.subscription.updated': {
-        const sub = event.data.object as Stripe.Subscription
-        if (sub.metadata?.userId && sub.metadata?.plan && sub.status === 'active')
-          await updateUserPlan(sub.metadata.userId, sub.metadata.plan)
+        const subscription = event.data.object as Stripe.Subscription
+        const userId = subscription.metadata?.userId
+        const plan = subscription.metadata?.plan as 'free' | 'basico' | 'freelancepro' | 'studio' | undefined
+        if (userId && plan && subscription.status === 'active') {
+          await updateUserPlan(userId, plan)
+        }
         break
       }
 
