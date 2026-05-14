@@ -17,8 +17,29 @@ import { WeatherWidget } from '../components/WeatherWidget'
 import { DateComparator } from '../components/DateComparator'
 import { ShootViabilityScore } from '../components/ShootViabilityScore'
 import { ClimateTimeline } from '../components/ClimateTimeline'
-import { ProjectForecastView } from '../components/ProjectForecastView'
-import type { HourlySlot, AiAnalysis } from '../components/ProjectForecastView'
+import { ProjectForecastView }   from '../components/ProjectForecastView'
+import { ProjectInfoPanel }      from '../components/ProjectInfoPanel'
+import { PdfHistoryPanel }       from '../components/PdfHistoryPanel'
+import type { AiAnalysis } from '../components/ProjectForecastView'
+
+
+interface HourlySlot {
+  time: string
+  temp: number
+  feelsLike: number
+  humidity: number
+  precipitation: number
+  windSpeed: number
+  windDir: number
+  cloudCover: number
+  uvIndex: number
+  description: string
+  icon: string
+  riesgo: 'bajo' | 'medio' | 'alto'
+}
+
+
+
 
 export interface Project {
   id: number
@@ -126,7 +147,7 @@ async function generatePDF5Days(project: Project, ai: AiAnalysis) {
   sf('#07121f'); doc.rect(0,0,W,297,'F'); st('#60a5fa'); doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text('WEATHER STUDIO',M,22); st('#f8fafc'); doc.setFontSize(24); doc.text(doc.splitTextToSize(project.name,colW),M,48); st('#cbd5e1'); doc.setFontSize(11); doc.text(`Ubicación: ${project.location}`,M,70); doc.text(`Fecha de rodaje: ${project.shoot_date}`,M,78); doc.text(`Mejor día: ${ai.mejor_dia || '-'}`,M,86)
   doc.addPage(); y = 18; sf('#ffffff'); doc.rect(0,0,W,297,'F')
   if (ai.resumen) { const lines = doc.splitTextToSize(ai.resumen, colW-12); const h = lines.length*5+14; sf('#eff6ff'); sd('#60a5fa'); doc.roundedRect(M,y,colW,h,3,3,'FD'); st('#2563eb'); doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.text('ANÁLISIS IA',M+6,y+6); st('#1e293b'); doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.text(lines,M+6,y+12); y += h + 10 }
-  ai.forecast?.forEach((day) => { checkPage(34); const color = riskColor(day.riesgo); const bg = day.riesgo==='alto'?'#fef2f2':day.riesgo==='medio'?'#fffbeb':'#f0fdf4'; sf(bg); sd(color); doc.roundedRect(M,y,colW,28,3,3,'FD'); st('#0f172a'); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(`${day.icon} ${day.label} — ${day.date}`,M+6,y+8); st(color); doc.setFontSize(8); doc.text((day.riesgo||'').toUpperCase(),W-M-18,y+8); st('#475569'); doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.text(`Tmax: ${day.tempMax}°C · Tmin: ${day.tempMin}°C · Lluvia: ${day.precipitation}mm · Viento: ${day.windSpeed}km/h · UV: ${day.uvIndex}`,M+6,y+15); const rec = doc.splitTextToSize(day.recomendacion,colW-12); st('#1e293b'); doc.text(rec.slice(0,1),M+6,y+22); y += 34 })
+  ai.forecast?.forEach((day: any) => { checkPage(34); const color = riskColor(day.riesgo); const bg = day.riesgo==='alto'?'#fef2f2':day.riesgo==='medio'?'#fffbeb':'#f0fdf4'; sf(bg); sd(color); doc.roundedRect(M,y,colW,28,3,3,'FD'); st('#0f172a'); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(`${day.icon} ${day.label} — ${day.date}`,M+6,y+8); st(color); doc.setFontSize(8); doc.text((day.riesgo||'').toUpperCase(),W-M-18,y+8); st('#475569'); doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.text(`Tmax: ${day.tempMax}°C · Tmin: ${day.tempMin}°C · Lluvia: ${day.precipitation}mm · Viento: ${day.windSpeed}km/h · UV: ${day.uvIndex}`,M+6,y+15); const rec = doc.splitTextToSize(day.recomendacion,colW-12); st('#1e293b'); doc.text(rec.slice(0,1),M+6,y+22); y += 34 })
   const total = doc.getNumberOfPages()
   for (let i = 1; i <= total; i++) { doc.setPage(i); sf('#f1f5f9'); doc.rect(0,285,W,12,'F'); st('#94a3b8'); doc.setFontSize(7); doc.text('WEATHER STUDIO · Informe meteorológico',M,291); doc.text(`Pág. ${i} de ${total}`,W-M-10,291) }
   const fileName = `ws-forecast-${project.name.toLowerCase().replace(/\s+/g,'-')}-${project.shoot_date}.pdf`
@@ -547,119 +568,22 @@ function ConfigSection() {
 }
 
 // ─── Create Modal ─────────────────────────────────────────────────────────────
-interface NominatimResult {
-  place_id: number
-  display_name: string
-  lat: string
-  lon: string
-}
-
 function CreateModal({ onClose, onCreated, token, isAdvanced }: {
   onClose: () => void; onCreated: (p: Project) => void; token: string; isAdvanced: boolean
 }) {
   const [form, setForm] = useState({ name: '', location: '', shoot_date: '', description: '' })
-  const [selectedCoords, setSelectedCoords] = useState<{ lat: number; lon: number } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [locationSuggestions, setLocationSuggestions] = useState<NominatimResult[]>([])
-  const [showSuggestions, setShowSuggestions] = useState(false)
-  const [loadingLocation, setLoadingLocation] = useState(false)
-  const [loadingSuggestions, setLoadingSuggestions] = useState(false)
-  const locationDebounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const suggestionsRef = React.useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (suggestionsRef.current && !suggestionsRef.current.contains(e.target as Node)) {
-        setShowSuggestions(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
-
-  function handleLocationInput(value: string) {
-    setForm(p => ({ ...p, location: value }))
-    setSelectedCoords(null)
-    if (locationDebounceRef.current) clearTimeout(locationDebounceRef.current)
-    if (value.trim().length < 2) { setLocationSuggestions([]); setShowSuggestions(false); return }
-    locationDebounceRef.current = setTimeout(async () => {
-      setLoadingSuggestions(true)
-      try {
-        const res = await fetch(
-          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(value)}&format=json&limit=6&addressdetails=1`,
-          { headers: { 'Accept-Language': 'es', 'User-Agent': 'WeatherStudio/1.0' } }
-        )
-        const data: NominatimResult[] = await res.json()
-        setLocationSuggestions(data)
-        setShowSuggestions(data.length > 0)
-      } catch {
-        setLocationSuggestions([])
-      } finally {
-        setLoadingSuggestions(false)
-      }
-    }, 350)
-  }
-
-  function selectSuggestion(item: NominatimResult) {
-    const cleanName = item.display_name.split(',').slice(0, 2).join(',').trim()
-    setForm(p => ({ ...p, location: cleanName }))
-    setSelectedCoords({ lat: parseFloat(item.lat), lon: parseFloat(item.lon) })
-    setLocationSuggestions([])
-    setShowSuggestions(false)
-  }
-
-  async function handleCurrentLocation() {
-    if (!navigator.geolocation) { setError('Tu navegador no soporta geolocalización'); return }
-    setLoadingLocation(true)
-    setError('')
-    navigator.geolocation.getCurrentPosition(
-      async pos => {
-        const { latitude, longitude } = pos.coords
-        try {
-          const res = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`,
-            { headers: { 'Accept-Language': 'es', 'User-Agent': 'WeatherStudio/1.0' } }
-          )
-          const data = await res.json()
-          const city = data.address?.city || data.address?.town || data.address?.village || data.address?.municipality || ''
-          const country = data.address?.country || ''
-          const locationName = city && country
-            ? `${city}, ${country}`
-            : data.display_name?.split(',').slice(0, 2).join(',').trim() || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`
-          setForm(p => ({ ...p, location: locationName }))
-          setSelectedCoords({ lat: latitude, lon: longitude })
-        } catch {
-          setForm(p => ({ ...p, location: `${latitude.toFixed(4)}, ${longitude.toFixed(4)}` }))
-          setSelectedCoords({ lat: latitude, lon: longitude })
-        } finally {
-          setLoadingLocation(false)
-        }
-      },
-      err => {
-        setLoadingLocation(false)
-        if (err.code === 1) setError('Permiso de ubicación denegado. Actívalo en tu navegador.')
-        else if (err.code === 2) setError('No se pudo determinar tu ubicación.')
-        else setError('Tiempo de espera agotado al obtener ubicación.')
-      },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
-    )
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!form.name || !form.location || !form.shoot_date) { setError('Nombre, ubicación y fecha son obligatorios'); return }
     setLoading(true); setError('')
     try {
-      const payload = {
-        ...form,
-        advancedAI: isAdvanced,
-        ...(selectedCoords ? { lat: selectedCoords.lat, lon: selectedCoords.lon } : {}),
-      }
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...form, advancedAI: isAdvanced }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Error al crear el proyecto')
@@ -719,134 +643,25 @@ function CreateModal({ onClose, onCreated, token, isAdvanced }: {
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 14 }}>
-          {/* Nombre del proyecto */}
-          <div style={{ display: 'grid', gap: 7 }}>
-            <label style={{ fontSize: 11, color: C.textMuted, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Nombre del proyecto</label>
-            <input
-              type="text"
-              style={inputStyle}
-              value={form.name}
-              placeholder="Ej: Nike Campaign Valencia"
-              onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-              onFocus={e => (e.target.style.borderColor = 'rgba(59,130,246,0.5)')}
-              onBlur={e => (e.target.style.borderColor = C.border)}
-            />
-          </div>
-
-          {/* Ubicación con autocomplete */}
-          <div style={{ display: 'grid', gap: 7 }}>
-            <label style={{ fontSize: 11, color: C.textMuted, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Ubicación del rodaje</label>
-            <div style={{ position: 'relative' }} ref={suggestionsRef}>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <div style={{ position: 'relative', flex: 1 }}>
-                  <input
-                    type="text"
-                    style={{ ...inputStyle, paddingRight: loadingSuggestions ? 42 : 16 }}
-                    value={form.location}
-                    placeholder="Escribe una ciudad o dirección..."
-                    autoComplete="off"
-                    onChange={e => handleLocationInput(e.target.value)}
-                    onFocus={e => {
-                      e.target.style.borderColor = 'rgba(59,130,246,0.5)'
-                      if (locationSuggestions.length > 0) setShowSuggestions(true)
-                    }}
-                    onBlur={e => (e.target.style.borderColor = C.border)}
-                  />
-                  {loadingSuggestions && (
-                    <div style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', color: C.textMuted }}>
-                      <Loader2 size={14} style={{ animation: 'spin .8s linear infinite' }} />
-                    </div>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={handleCurrentLocation}
-                  disabled={loadingLocation}
-                  title="Usar mi ubicación actual"
-                  style={{
-                    height: 48, minWidth: 48, borderRadius: 12, flexShrink: 0,
-                    border: `1px solid ${C.border}`,
-                    background: loadingLocation ? 'rgba(59,130,246,0.08)' : 'rgba(255,255,255,0.04)',
-                    color: loadingLocation ? C.blue : C.textMuted,
-                    cursor: loadingLocation ? 'wait' : 'pointer',
-                    display: 'grid', placeItems: 'center',
-                    transition: 'all 0.15s',
-                  }}
-                  onMouseEnter={e => { if (!loadingLocation) { (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(59,130,246,0.5)'; (e.currentTarget as HTMLButtonElement).style.color = C.blue } }}
-                  onMouseLeave={e => { if (!loadingLocation) { (e.currentTarget as HTMLButtonElement).style.borderColor = C.border; (e.currentTarget as HTMLButtonElement).style.color = C.textMuted } }}
-                >
-                  {loadingLocation
-                    ? <Loader2 size={15} style={{ animation: 'spin .8s linear infinite' }} />
-                    : <MapPin size={15} />
-                  }
-                </button>
-              </div>
-
-              {/* Autocomplete dropdown */}
-              {showSuggestions && locationSuggestions.length > 0 && (
-                <div style={{
-                  position: 'absolute', top: '100%', left: 0, right: 56, zIndex: 400,
-                  marginTop: 4, borderRadius: 12,
-                  background: '#0d1a2e', border: `1px solid ${C.borderStrong}`,
-                  boxShadow: '0 16px 40px rgba(0,0,0,0.5)',
-                  overflow: 'hidden',
-                }}>
-                  {locationSuggestions.map((item, idx) => {
-                    const parts = item.display_name.split(',')
-                    const primary = parts.slice(0, 2).join(',').trim()
-                    const secondary = parts.slice(2, 4).join(',').trim()
-                    return (
-                      <button
-                        key={item.place_id}
-                        type="button"
-                        onMouseDown={() => selectSuggestion(item)}
-                        style={{
-                          width: '100%', textAlign: 'left', padding: '10px 14px',
-                          background: 'transparent', border: 'none',
-                          borderBottom: idx < locationSuggestions.length - 1 ? `1px solid ${C.border}` : 'none',
-                          cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10,
-                          transition: 'background 0.1s',
-                        }}
-                        onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.background = 'rgba(59,130,246,0.08)')}
-                        onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.background = 'transparent')}
-                      >
-                        <MapPin size={13} style={{ color: C.blue, flexShrink: 0 }} />
-                        <div>
-                          <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{primary}</div>
-                          {secondary && <div style={{ fontSize: 11, color: C.textMuted, marginTop: 1 }}>{secondary}</div>}
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-
-              {/* Coords badge cuando se selecciona una ubicación */}
-              {selectedCoords && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
-                  <CheckCircle2 size={12} style={{ color: C.green }} />
-                  <span style={{ fontSize: 11, color: C.green }}>
-                    Coordenadas obtenidas · {selectedCoords.lat.toFixed(4)}, {selectedCoords.lon.toFixed(4)}
-                  </span>
-                </div>
-              )}
+          {[
+            { key: 'name', label: 'Nombre del proyecto', placeholder: 'Ej: Nike Campaign Valencia', type: 'text' },
+            { key: 'location', label: 'Ubicación del rodaje', placeholder: 'Ej: Valencia, España', type: 'text' },
+            { key: 'shoot_date', label: 'Fecha principal de rodaje', placeholder: '', type: 'date' },
+          ].map(({ key, label, placeholder, type }) => (
+            <div key={key} style={{ display: 'grid', gap: 7 }}>
+              <label style={{ fontSize: 11, color: C.textMuted, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</label>
+              <input
+                type={type}
+                style={{ ...inputStyle, colorScheme: type === 'date' ? 'dark' : undefined }}
+                value={(form as any)[key]}
+                placeholder={placeholder}
+                onChange={e => setForm(p => ({ ...p, [key]: e.target.value }))}
+                onFocus={e => (e.target.style.borderColor = 'rgba(59,130,246,0.5)')}
+                onBlur={e => (e.target.style.borderColor = C.border)}
+              />
             </div>
-          </div>
+          ))}
 
-          {/* Fecha de rodaje */}
-          <div style={{ display: 'grid', gap: 7 }}>
-            <label style={{ fontSize: 11, color: C.textMuted, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Fecha principal de rodaje</label>
-            <input
-              type="date"
-              style={{ ...inputStyle, colorScheme: 'dark' }}
-              value={form.shoot_date}
-              onChange={e => setForm(p => ({ ...p, shoot_date: e.target.value }))}
-              onFocus={e => (e.target.style.borderColor = 'rgba(59,130,246,0.5)')}
-              onBlur={e => (e.target.style.borderColor = C.border)}
-            />
-          </div>
-
-          {/* Descripción */}
           <div style={{ display: 'grid', gap: 7 }}>
             <label style={{ fontSize: 11, color: C.textMuted, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Descripción del proyecto</label>
             <textarea
@@ -940,6 +755,13 @@ function ProjectPanel({ project, canExportPDF, canExportDayPDF, isAdvanced }: {
 
   return (
     <div style={{ padding: '0 22px 22px' }}>
+
+      {/* ── Información enriquecida del proyecto ── */}
+      <ProjectInfoPanel
+        project={project}
+        aiAnalysis={project.aianalysis}
+      />
+
       {/* KPI row */}
       {firstDay && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 18 }}>
@@ -1154,7 +976,7 @@ export function DashboardPage() {
         background: 'rgba(5,10,20,0.94)',
         position: 'sticky', top: 68,
         height: 'calc(100vh - 68px)',
-        padding: 10, display: 'flex', flexDirection: 'column', gap: 4,
+        padding: 10, display: 'flex', flexDirection: 'column', gap: 6,
         zIndex: 10, flexShrink: 0,
         backdropFilter: 'blur(20px)',
       }}>
@@ -1173,7 +995,7 @@ export function DashboardPage() {
         </button>
 
         {/* Nav */}
-        <div style={{ display: 'grid', gap: 3 }}>
+        <div style={{ display: 'grid', gap: 4, flex: 1 }}>
           {navItems.map(item => {
             const active = activeSection === item.id
             return (
@@ -1205,7 +1027,7 @@ export function DashboardPage() {
         <div style={{
           borderRadius: 14, padding: sidebarOpen ? '12px 14px' : '10px',
           border: `1px solid ${C.border}`, background: C.surface,
-          transition: 'all 0.22s', marginTop: 'auto',
+          transition: 'all 0.22s',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{
@@ -1468,6 +1290,9 @@ export function DashboardPage() {
             <div style={{ fontSize: 24, fontWeight: 900, color: C.text, marginBottom: 4, letterSpacing: '-0.02em' }}>Reportes PDF</div>
             <p style={{ margin: '0 0 24px', color: C.textMuted, fontSize: 13 }}>Historial de informes meteorológicos generados</p>
             <ReportsSection userId={String(user.id)} />
+
+              {/* ── Historial Studio ── */}
+              <PdfHistoryPanel token={token} />
           </motion.div>
         )}
 
