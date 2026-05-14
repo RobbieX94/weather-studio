@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { FileText, Clock, Loader } from 'lucide-react'
 import type { AiAnalysis, HourlySlot } from './ProjectForecastView'
+import { registerPdfInHistory } from './PdfHistoryPanel'
 
 // ── Tipos del proyecto ────────────────────────────────────────────────────────
 
@@ -30,6 +31,7 @@ async function loadJsPDF(): Promise<any> {
   })
   return (window as any).jspdf.jsPDF
 }
+
 
 // ── Fetch forecast hora a hora desde Tomorrow.io ──────────────────────────────
 

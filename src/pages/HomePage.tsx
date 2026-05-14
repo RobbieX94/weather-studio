@@ -103,8 +103,8 @@ const pricingPlans = [
       { label: 'SLA garantizado', included: true },
       { label: 'Onboarding personalizado', included: true },
     ],
-    cta: 'Contactar',
-    href: '/contact',
+    cta: 'Empezar',
+    href: '/register?plan=studio',
   },
 ]
 
