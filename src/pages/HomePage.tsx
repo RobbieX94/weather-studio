@@ -8,7 +8,7 @@ import { WeatherWidget } from '../components/WeatherWidget'
 import { HeroVideoBackground } from '../components/HeroVideoBackground'
 
 type BillingCycle = 'monthly' | 'yearly'
-type PlanKey = 'free' | 'basico' | 'freelancepro' | 'studio'
+type PlanKey = 'free' | 'freelance' | 'freelancepro' | 'studio'
 
 type Plan = {
   key: PlanKey
@@ -35,21 +35,21 @@ const plans: Plan[] = [
     features: ['1 proyecto activo', 'Forecast básico 5 días', 'Panel inicial', 'Sin IA avanzada'],
   },
   {
-    key: 'basico',
-    name: 'Básico',
+    key: 'freelance',
+    name: 'Freelance',
     badge: 'Más elegido',
-    monthly: 12,
-    yearly: 129,
+    monthly: 29,
+    yearly: 359,
     discount: 10,
     description: 'Ideal para profesionales que necesitan previsión fiable y exportación rápida.',
-    cta: 'Elegir Básico',
+    cta: 'Elegir Freelance',
     features: ['3 proyectos activos', 'Forecast 5 días con IA', 'Exportación PDF básica', 'Alertas operativas'],
   },
   {
     key: 'freelancepro',
     name: 'Freelance Pro',
-    monthly: 24,
-    yearly: 245,
+    monthly: 59,
+    yearly: 720,
     discount: 15,
     description: 'Pensado para operadores, fotógrafos y productores que trabajan cada semana.',
     cta: 'Elegir Pro',
@@ -60,8 +60,8 @@ const plans: Plan[] = [
     key: 'studio',
     name: 'Studio',
     badge: 'Ahorro máximo',
-    monthly: 49,
-    yearly: 470,
+    monthly: 129,
+    yearly: 1560,
     discount: 20,
     description: 'Para productoras y equipos que necesitan control continuo y escala real.',
     cta: 'Elegir Studio',
@@ -95,9 +95,9 @@ export default function HomePage() {
   }, [])
 
   const stats = useMemo(() => [
-    { label: 'Forecast accionable', value: '5 días + horario' },
-    { label: 'Planes anuales', value: 'Hasta un 20% dto.' },
-    { label: 'Enfoque', value: 'Cine · foto · producción' },
+   /*  { label: 'Forecast accionable', value: '5 días + horario' }, */
+    /* { label: 'Planes anuales', value: 'Hasta un 20% dto.' }, */
+    /* { label: 'Enfoque', value: 'Cine · foto · producción' }, */
   ], [])
 
   const handlePlanSelect = (plan: Plan) => {
@@ -112,12 +112,12 @@ export default function HomePage() {
     <div style={{ minHeight: '100vh', background: '#07111f', color: '#fff', overflowX: 'hidden' }}>
       <section style={{ position: 'relative', overflow: 'hidden', borderBottom: '1px solid rgba(255,255,255,0.08)', background: 'linear-gradient(180deg,#08101d 0%,#091526 50%,#07111f 100%)' }}>
         <HeroVideoBackground city={weather?.city ?? 'Valencia'} />
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(2,6,23,0.12) 0%, rgba(2,6,23,0.18) 36%, rgba(2,6,23,0.28) 100%)' }} />
+        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(255, 255, 255, 0) 0%, rgba(2,6,23,0.04) 0%, rgba(2,6,23,0.10) 0%)', pointerEvents: 'none' }} />
 
         <div style={{ position: 'relative', maxWidth: 1280, margin: '0 auto', padding: '148px 24px 96px' }}>
           <div style={{ display: 'grid', gap: 48, alignItems: 'center', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
             <div>
-              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} style={{ marginBottom: 20, display: 'inline-flex', alignItems: 'center', gap: 8, borderRadius: 999, border: '1px solid rgba(34,211,238,0.18)', background: 'rgba(34,211,238,0.08)', padding: '10px 16px', fontSize: 14, color: '#c8f7ff' }}>
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 0, y: 0 }} transition={{ duration: 0.5 }} style={{ marginBottom: 20, display: 'inline-flex', alignItems: 'center', gap: 8, borderRadius: 999, border: '1px solid rgba(34,211,238,0.18)', background: 'rgba(34,211,238,0.08)', padding: '10px 16px', fontSize: 14, color: '#c8f7ff' }}>
                 <Zap size={14} /> Predicción operativa para rodajes, localizaciones y equipos
               </motion.div>
 

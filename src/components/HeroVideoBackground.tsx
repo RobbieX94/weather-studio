@@ -66,8 +66,8 @@ export function HeroVideoBackground({ city }: HeroVideoBackgroundProps) {
         style={{
           position: 'absolute',
           inset: 0,
-          background: 'linear-gradient(to bottom, rgba(5,13,26,0.3) 0%, rgba(5,13,26,0.75) 100%)',
-          zIndex: 1,
+          background: 'linear-gradient(to bottom, rgba(5, 13, 26, 0.05) 0%, rgba(5,13,26,0.75) 100%)',
+          zIndex: 0,
           pointerEvents: 'none',
         }}
       />

@@ -5,7 +5,7 @@ import { supabase } from '../services/supabase'
 import { useAuth } from '../context/AuthContext'
 import { Mail, Lock, User, Loader2, ArrowRight, CheckCircle2, ChevronLeft, Zap, Crown, Star, Tag } from 'lucide-react'
 
-type PlanKey = 'free' | 'basico' | 'freelancepro' | 'studio'
+type PlanKey = 'free' | 'freelance' | 'freelancepro' | 'studio'
 type BillingCycle = 'monthly' | 'yearly'
 
 const PLANS: Record<PlanKey, {
@@ -21,16 +21,16 @@ const PLANS: Record<PlanKey, {
     label: 'Free', color: '#6b7280', border: 'rgba(136,150,176,0.3)', monthlyPrice: 0, yearlyPrice: 0, discount: 0,
     features: ['1 proyecto activo', 'Forecast básico 5 días', 'Sin IA'],
   },
-  basico: {
-    label: 'Básico', color: '#3b82f6', border: 'rgba(59,130,246,0.35)', monthlyPrice: 9, yearlyPrice: 97, discount: 10,
+  freelance: {
+    label: 'Freelance', color: '#3b82f6', border: 'rgba(59,130,246,0.35)', monthlyPrice: 29, yearlyPrice: 359, discount: 10,
     features: ['3 proyectos activos', 'Forecast 5 días con IA', 'Exportación PDF básica'],
   },
   freelancepro: {
-    label: 'Freelance Pro', color: '#06b6d4', border: 'rgba(6,182,212,0.35)', monthlyPrice: 19, yearlyPrice: 194, discount: 15,
+    label: 'Freelance Pro', color: '#06b6d4', border: 'rgba(6,182,212,0.35)', monthlyPrice: 59, yearlyPrice: 720, discount: 15,
     features: ['Proyectos ilimitados', 'Forecast horario avanzado', 'IA Pro + PDF premium'],
   },
   studio: {
-    label: 'Studio', color: '#8b5cf6', border: 'rgba(139,92,246,0.35)', monthlyPrice: 39, yearlyPrice: 374, discount: 20,
+    label: 'Studio', color: '#8b5cf6', border: 'rgba(139,92,246,0.35)', monthlyPrice: 129, yearlyPrice: 1560, discount: 20,
     features: ['Todo de Pro', 'Análisis IA completo', 'Historial PDF 30 días'],
   },
 }

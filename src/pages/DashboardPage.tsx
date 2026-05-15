@@ -973,12 +973,17 @@ export function DashboardPage() {
       <aside style={{
         width: sidebarOpen ? 232 : 68, transition: 'width 0.22s cubic-bezier(0.4,0,0.2,1)',
         borderRight: `1px solid ${C.border}`,
+        borderLeft: `1px solid ${C.borderStrong}`,
+        borderTop: `1px solid ${C.borderStrong}`,
+        borderBottom: `1px solid ${C.borderStrong}`,
+        borderRadius: '20px 20px 20px 20px',
         background: 'rgba(5,10,20,0.94)',
         position: 'sticky', top: 68,
-        height: 'calc(100vh - 68px)',
+        height: 'calc(50vh - 34px)',
         padding: 10, display: 'flex', flexDirection: 'column', gap: 6,
         zIndex: 10, flexShrink: 0,
         backdropFilter: 'blur(20px)',
+        
       }}>
         {/* Toggle */}
         <button
