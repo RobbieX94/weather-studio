@@ -32,7 +32,7 @@ const plans: Plan[] = [
     discount: 0,
     description: 'Para explorar la plataforma y crear tu primer proyecto.',
     cta: 'Empezar gratis',
-    features: ['1 proyecto activo', 'Forecast básico 5 días', 'Panel inicial', 'Sin IA avanzada'],
+    features: ['1 proyecto activo', 'Forecast básico de 1 día', 'Panel inicial', 'Sin IA avanzada'],
   },
   {
     key: 'freelance',
