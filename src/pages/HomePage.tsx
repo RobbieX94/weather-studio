@@ -234,7 +234,7 @@ export default function HomePage() {
           <div style={{ maxWidth: 760, margin: '0 auto', textAlign: 'center' }}>
             <div style={{ marginBottom: 16, display: 'inline-flex', alignItems: 'center', gap: 8, borderRadius: 999, border: '1px solid rgba(34,211,238,0.2)', background: 'rgba(34,211,238,0.1)', padding: '10px 16px', fontSize: 14, color: '#a5f3fc' }}><Shield size={14} /> Suscripciones flexibles para cada nivel de trabajo</div>
             <h2 style={{ fontSize: 'clamp(2rem,4vw,3rem)', fontWeight: 900, letterSpacing: '-0.03em', color: '#fff' }}>Elige mensual o anual y activa el plan que encaja con tu flujo</h2>
-            <p style={{ marginTop: 18, fontSize: 18, color: '#94a3b8', lineHeight: 1.8 }}>Los planes anuales aplican descuento automático: Básico -10%, Freelance Pro -15% y Studio -20%.</p>
+            <p style={{ marginTop: 18, fontSize: 18, color: '#94a3b8', lineHeight: 1.8 }}>Hasta un 20% de descuento en planes anuales.</p>
           </div>
 
           <div style={{ marginTop: 40, display: 'flex', justifyContent: 'center' }}>
