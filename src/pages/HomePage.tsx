@@ -25,7 +25,7 @@ function RainEffect() {
 }
 
 type BillingCycle = 'monthly' | 'yearly'
-type PlanKey = 'free' | 'basico' | 'freelancepro' | 'studio'
+type PlanKey = 'free' | 'freelance' | 'freelancepro' | 'studio'
 
 type Plan = {
   key: PlanKey
@@ -52,21 +52,21 @@ const plans: Plan[] = [
     features: ['1 proyecto activo', 'Forecast básico 5 días', 'Panel inicial', 'Sin IA avanzada'],
   },
   {
-    key: 'basico',
-    name: 'Básico',
+    key: 'freelance',
+    name: 'Freelance',
     badge: 'Más elegido',
-    monthly: 9,
-    yearly: 97,
+    monthly: 29,
+    yearly: 359,
     discount: 10,
     description: 'Ideal para profesionales que necesitan previsión fiable y exportación rápida.',
-    cta: 'Elegir Básico',
+    cta: 'Elegir Freelance',
     features: ['3 proyectos activos', 'Forecast 5 días con IA', 'Exportación PDF básica', 'Alertas operativas'],
   },
   {
     key: 'freelancepro',
     name: 'Freelance Pro',
-    monthly: 19,
-    yearly: 194,
+    monthly: 59,
+    yearly: 720,
     discount: 15,
     description: 'Pensado para operadores, fotógrafos y productores que trabajan cada semana.',
     cta: 'Elegir Pro',
@@ -77,8 +77,8 @@ const plans: Plan[] = [
     key: 'studio',
     name: 'Studio',
     badge: 'Ahorro máximo',
-    monthly: 39,
-    yearly: 374,
+    monthly: 129,
+    yearly: 1.560,
     discount: 20,
     description: 'Para productoras y equipos que necesitan control continuo y escala real.',
     cta: 'Elegir Studio',
