@@ -7,23 +7,6 @@ import type { CurrentWeather } from '../services/weather'
 import { WeatherWidget } from '../components/WeatherWidget'
 import { HeroVideoBackground } from '../components/HeroVideoBackground'
 
-function RainEffect() {
-  const drops = Array.from({ length: 40 }, (_, i) => i)
-  return (
-    <div style={{ pointerEvents: 'none', position: 'absolute', inset: 0, overflow: 'hidden', opacity: 0.16 }}>
-      {drops.map((i) => (
-        <motion.div
-          key={i}
-          style={{ position: 'absolute', top: '-10%', width: 1, height: 64, background: 'linear-gradient(to bottom, rgba(103,232,249,0), rgba(165,243,252,0.5), rgba(224,242,254,0))' }}
-          initial={{ y: '-10%', x: `${(i * 2.5) % 100}%`, opacity: 0 }}
-          animate={{ y: '120vh', opacity: [0, 0.55, 0] }}
-          transition={{ duration: 1.3 + (i % 8) * 0.18, repeat: Infinity, delay: i * 0.08, ease: 'linear' }}
-        />
-      ))}
-    </div>
-  )
-}
-
 type BillingCycle = 'monthly' | 'yearly'
 type PlanKey = 'free' | 'basico' | 'freelancepro' | 'studio'
 
@@ -129,8 +112,7 @@ export default function HomePage() {
     <div style={{ minHeight: '100vh', background: '#07111f', color: '#fff', overflowX: 'hidden' }}>
       <section style={{ position: 'relative', overflow: 'hidden', borderBottom: '1px solid rgba(255,255,255,0.08)', background: 'linear-gradient(180deg,#08101d 0%,#091526 50%,#07111f 100%)' }}>
         <HeroVideoBackground city={weather?.city ?? 'Valencia'} />
-        {/* <RainEffect />
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(2,6,23,0.22) 0%, rgba(2,6,23,0.3) 34%, rgba(2,6,23,0.42) 80%)' }} /> */}
+        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(2,6,23,0.12) 0%, rgba(2,6,23,0.18) 36%, rgba(2,6,23,0.28) 100%)' }} />
 
         <div style={{ position: 'relative', maxWidth: 1280, margin: '0 auto', padding: '148px 24px 96px' }}>
           <div style={{ display: 'grid', gap: 48, alignItems: 'center', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
