@@ -128,8 +128,8 @@ export default function HomePage() {
   return (
     <div style={{ minHeight: '100vh', background: '#07111f', color: '#fff', overflowX: 'hidden' }}>
       <section style={{ position: 'relative', overflow: 'hidden', borderBottom: '1px solid rgba(255,255,255,0.08)', background: 'linear-gradient(180deg,#08101d 0%,#091526 50%,#07111f 100%)' }}>
-      {/*   <HeroVideoBackground city={weather?.city ?? 'Valencia'} />
-        <RainEffect /> */}
+        <HeroVideoBackground city={weather?.city ?? 'Valencia'} />
+        <RainEffect />
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(2,6,23,0.55)' }} />
 
         <div style={{ position: 'relative', maxWidth: 1280, margin: '0 auto', padding: '24px 24px 96px' }}>
