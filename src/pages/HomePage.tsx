@@ -129,8 +129,8 @@ export default function HomePage() {
     <div style={{ minHeight: '100vh', background: '#07111f', color: '#fff', overflowX: 'hidden' }}>
       <section style={{ position: 'relative', overflow: 'hidden', borderBottom: '1px solid rgba(255,255,255,0.08)', background: 'linear-gradient(180deg,#08101d 0%,#091526 50%,#07111f 100%)' }}>
         <HeroVideoBackground city={weather?.city ?? 'Valencia'} />
-        <RainEffect />
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(2,6,23,0.22) 0%, rgba(2,6,23,0.3) 34%, rgba(2,6,23,0.42) 80%)' }} />
+        {/* <RainEffect />
+        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(2,6,23,0.22) 0%, rgba(2,6,23,0.3) 34%, rgba(2,6,23,0.42) 80%)' }} /> */}
 
         <div style={{ position: 'relative', maxWidth: 1280, margin: '0 auto', padding: '148px 24px 96px' }}>
           <div style={{ display: 'grid', gap: 48, alignItems: 'center', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
