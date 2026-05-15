@@ -1,206 +1,235 @@
 // src/components/PdfHistoryPanel.tsx
-import React, { useEffect, useState, useCallback } from 'react'
-import { useAuth } from '../context/AuthContext'
+// Panel de historial de PDFs generados — lista, descarga y elimina desde Supabase Storage.
 
-interface PdfEntry {
-  id: number
-  project_id: number
+import React, { useEffect, useState } from 'react'
+import { FileText, Download, Trash2, Clock, RefreshCw } from 'lucide-react'
+import { supabase } from '../services/supabase'
+
+// ── Tipos ─────────────────────────────────────────────────────────────────────
+
+export interface PdfRecord {
+  id: string
+  user_id: string
   project_name: string
-  pdf_type: 'forecast_5d' | 'hourly' | 'day_detail'
-  filename: string
-  location: string
-  shoot_date: string
-  generated_at: string
-  expires_at: string
+  report_type: 'forecast_5d' | 'hourly'
+  file_name: string
+  storage_path: string
+  date_label: string
+  created_at: string
 }
 
-const PDF_TYPE_LABELS: Record<string, { label: string; icon: string; color: string }> = {
-  forecast_5d: { label: 'Forecast 5 días',  icon: '📊', color: '#3b82f6' },
-  hourly:      { label: 'Parte hora a hora', icon: '⏱️', color: '#06b6d4' },
-  day_detail:  { label: 'Detalle de día',    icon: '📋', color: '#8b5cf6' },
+export interface NewPdfPayload {
+  project_name: string
+  report_type: 'forecast_5d' | 'hourly'
+  file_name: string
+  storage_path: string
+  date_label: string
 }
 
-function daysUntilExpiry(expiresAt: string): number {
-  const now = new Date()
-  const exp = new Date(expiresAt)
-  return Math.ceil((exp.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+// ── Registro en historial + subida a Storage ──────────────────────────────────
+// Llamado desde ExportPDFButton tras generar el PDF
+
+export async function registerPdfInHistory(
+  userId: string,
+  payload: NewPdfPayload,
+  blob: Blob
+): Promise<void> {
+  // 1. Subir al bucket pdf_reports
+  const { error: uploadError } = await supabase.storage
+    .from('pdf_reports')
+    .upload(payload.storage_path, blob, {
+      contentType: 'application/pdf',
+      upsert: true,
+    })
+
+  if (uploadError) {
+    console.error('[PdfHistory] Error al subir a Storage:', uploadError.message)
+    throw uploadError
+  }
+
+  // 2. Insertar registro en tabla pdf_history
+  const { error: insertError } = await supabase
+    .from('pdf_history')
+    .insert({
+      user_id: userId,
+      project_name: payload.project_name,
+      report_type: payload.report_type,
+      file_name: payload.file_name,
+      storage_path: payload.storage_path,
+      date_label: payload.date_label,
+    })
+
+  if (insertError) {
+    console.error('[PdfHistory] Error al insertar registro:', insertError.message)
+    throw insertError
+  }
 }
 
-function ExpiryBadge({ expiresAt }: { expiresAt: string }) {
-  const days = daysUntilExpiry(expiresAt)
-  if (days <= 3) return (
-    <span style={{ background: 'rgba(220,38,38,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 600 }}>
-      ⚠️ Expira en {days}d
-    </span>
-  )
-  if (days <= 7) return (
-    <span style={{ background: 'rgba(245,158,11,0.12)', color: '#fbbf24', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 600 }}>
-      Expira en {days}d
-    </span>
-  )
-  return (
-    <span style={{ background: 'rgba(16,185,129,0.1)', color: '#34d399', border: '1px solid rgba(16,185,129,0.25)', borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 500 }}>
-      {days} días restantes
-    </span>
-  )
-}
+// ── Panel de historial ────────────────────────────────────────────────────────
 
 interface Props {
-  token: string | null
+  userId: string
 }
 
-export function PdfHistoryPanel({ token }: Props) {
-  const { canUseAlerts } = useAuth()
-  const [history, setHistory] = useState<PdfEntry[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError]   = useState<string | null>(null)
+export function PdfHistoryPanel({ userId }: Props) {
+  const [records, setRecords] = useState<PdfRecord[]>([])
+  const [loading, setLoading] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
-  // Solo visible para plan Studio
-  if (!canUseAlerts()) return null
-
-  const fetchHistory = useCallback(async () => {
-    if (!token) return
+  async function fetchHistory() {
     setLoading(true)
-    try {
-      const res = await fetch('/api/pdf-history', {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error('Error al cargar historial')
-      const data = await res.json()
-      setHistory(data.history ?? [])
-    } catch {
-      setError('No se pudo cargar el historial de PDFs.')
-    } finally {
-      setLoading(false)
+    const { data, error } = await supabase
+      .from('pdf_history')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(50)
+
+    if (!error && data) setRecords(data as PdfRecord[])
+    setLoading(false)
+  }
+
+  useEffect(() => { fetchHistory() }, [userId])
+
+  async function handleDownload(record: PdfRecord) {
+    const { data, error } = await supabase.storage
+      .from('pdf_reports')
+      .download(record.storage_path)
+
+    if (error || !data) {
+      alert('No se pudo descargar el PDF. Puede que haya expirado.')
+      return
     }
-  }, [token])
 
-  useEffect(() => { fetchHistory() }, [fetchHistory])
+    const url = URL.createObjectURL(data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = record.file_name
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
-  async function handleDelete(id: number) {
-    if (!token) return
-    await fetch(`/api/pdf-history?id=${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    setHistory(prev => prev.filter(e => e.id !== id))
+  async function handleDelete(record: PdfRecord) {
+    if (!confirm(`¿Eliminar "${record.file_name}"?`)) return
+    setDeletingId(record.id)
+
+    // 1. Eliminar del Storage
+    await supabase.storage.from('pdf_reports').remove([record.storage_path])
+
+    // 2. Eliminar de la tabla
+    await supabase.from('pdf_history').delete().eq('id', record.id)
+
+    setRecords(r => r.filter(x => x.id !== record.id))
+    setDeletingId(null)
+  }
+
+  const typeLabel = (t: PdfRecord['report_type']) =>
+    t === 'forecast_5d' ? 'Forecast 5 días' : 'Parte hora a hora'
+
+  const typeColor = (t: PdfRecord['report_type']) =>
+    t === 'forecast_5d' ? '#3b82f6' : '#06b6d4'
+
+  if (!records.length && !loading) {
+    return (
+      <div style={{ textAlign: 'center', padding: '32px 16px', color: '#64748b' }}>
+        <FileText size={36} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
+        <p style={{ fontSize: 14, marginBottom: 4 }}>No hay PDFs generados todavía</p>
+        <p style={{ fontSize: 12, color: '#475569' }}>
+          Exporta tu primer informe desde cualquier proyecto
+        </p>
+      </div>
+    )
   }
 
   return (
-    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 20, overflow: 'hidden', marginTop: 24 }}>
-
-      {/* Cabecera */}
-      <div style={{ background: 'linear-gradient(135deg, rgba(79,70,229,0.25) 0%, rgba(109,40,217,0.2) 100%)', borderBottom: '1px solid rgba(139,92,246,0.25)', padding: '16px 22px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 20 }}>📁</span>
-          <div>
-            <div style={{ color: '#eef2ff', fontWeight: 700, fontSize: 15 }}>Historial de informes PDF</div>
-            <div style={{ color: '#a5b4fc', fontSize: 12, marginTop: 1 }}>Exclusivo plan Studio · Hasta 100 registros</div>
-          </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)',
+      }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#e2eaf5', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Clock size={14} /> Historial de informes PDF
         </div>
-        <span style={{ background: 'rgba(139,92,246,0.2)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)', borderRadius: 6, padding: '3px 10px', fontSize: 12, fontWeight: 700 }}>
-          ⭐ Studio
-        </span>
+        <button
+          onClick={fetchHistory}
+          disabled={loading}
+          style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', padding: 4 }}
+          title="Actualizar"
+        >
+          <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+        </button>
       </div>
 
-      {/* Aviso expiración */}
-      <div style={{ background: 'rgba(245,158,11,0.07)', borderBottom: '1px solid rgba(245,158,11,0.15)', padding: '10px 22px', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-        <span style={{ fontSize: 15, flexShrink: 0, marginTop: 1 }}>ℹ️</span>
-        <p style={{ margin: 0, fontSize: 12, color: '#fbbf24', lineHeight: 1.6 }}>
-          <strong>Eliminación automática:</strong> Los registros se eliminan a los <strong>30 días</strong> de su generación. Descarga tus informes antes de que expiren si necesitas conservarlos.
-        </p>
-      </div>
+      {/* Lista */}
+      <div style={{ maxHeight: 420, overflowY: 'auto' }}>
+        {records.map(rec => (
+          <div
+            key={rec.id}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '10px 16px', borderBottom: '1px solid rgba(255,255,255,0.04)',
+              gap: 10,
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                <span style={{
+                  fontSize: 10, fontWeight: 700, color: typeColor(rec.report_type),
+                  background: `${typeColor(rec.report_type)}18`,
+                  border: `1px solid ${typeColor(rec.report_type)}30`,
+                  borderRadius: 4, padding: '1px 5px',
+                }}>
+                  {typeLabel(rec.report_type)}
+                </span>
+                <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>
+                  {rec.project_name}
+                </span>
+              </div>
+              <div style={{ fontSize: 11, color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {rec.file_name}
+              </div>
+              <div style={{ fontSize: 10, color: '#475569', marginTop: 1 }}>
+                {new Date(rec.created_at).toLocaleString('es-ES', {
+                  day: '2-digit', month: '2-digit', year: 'numeric',
+                  hour: '2-digit', minute: '2-digit',
+                })}
+                {rec.date_label ? ` · ${rec.date_label}` : ''}
+              </div>
+            </div>
 
-      {/* Contenido */}
-      <div style={{ padding: '16px 22px' }}>
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: '32px 0', color: '#8896b0', fontSize: 14 }}>
-            Cargando historial...
-          </div>
-        ) : error ? (
-          <div style={{ textAlign: 'center', padding: '24px 0', color: '#ef4444', fontSize: 14 }}>{error}</div>
-        ) : history.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '32px 0' }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>📭</div>
-            <div style={{ color: '#8896b0', fontSize: 14, fontWeight: 600 }}>No hay informes generados todavía</div>
-            <div style={{ color: '#4a5568', fontSize: 13, marginTop: 6 }}>
-              Genera tu primer informe PDF desde cualquier proyecto para verlo aquí.
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => handleDownload(rec)}
+                title="Descargar"
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  width: 30, height: 30, borderRadius: 6,
+                  background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.2)',
+                  color: '#7ab8ff', cursor: 'pointer',
+                }}
+              >
+                <Download size={13} />
+              </button>
+              <button
+                onClick={() => handleDelete(rec)}
+                disabled={deletingId === rec.id}
+                title="Eliminar"
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  width: 30, height: 30, borderRadius: 6,
+                  background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)',
+                  color: '#f87171', cursor: deletingId === rec.id ? 'wait' : 'pointer',
+                }}
+              >
+                <Trash2 size={13} />
+              </button>
             </div>
           </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {history.map(entry => {
-              const typeInfo = PDF_TYPE_LABELS[entry.pdf_type] ?? { label: entry.pdf_type, icon: '📄', color: '#64748b' }
-              const generatedDate = new Date(entry.generated_at).toLocaleDateString('es-ES', {
-                day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
-              })
-              return (
-                <div
-                  key={entry.id}
-                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: '11px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-                    <span style={{ fontSize: 22, flexShrink: 0 }}>{typeInfo.icon}</span>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: '#eef2ff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {entry.project_name}
-                      </div>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 3 }}>
-                        <span style={{ background: typeInfo.color + '20', color: typeInfo.color, borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 600 }}>
-                          {typeInfo.label}
-                        </span>
-                        {entry.location && <span style={{ fontSize: 11, color: '#8896b0' }}>📍 {entry.location}</span>}
-                        <span style={{ fontSize: 11, color: '#4a5568' }}>Generado: {generatedDate}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                    <ExpiryBadge expiresAt={entry.expires_at} />
-                    <button
-                      onClick={() => handleDelete(entry.id)}
-                      title="Eliminar registro"
-                      style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 7, padding: '5px 9px', cursor: 'pointer', color: '#ef4444', fontSize: 13, transition: 'background 0.15s' }}
-                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(239,68,68,0.18)')}
-                      onMouseLeave={e => (e.currentTarget.style.background = 'rgba(239,68,68,0.08)')}
-                    >
-                      🗑️
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
+        ))}
       </div>
 
-      {history.length > 0 && (
-        <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '9px 22px', fontSize: 11, color: '#4a5568', textAlign: 'right' }}>
-          {history.length} informe{history.length !== 1 ? 's' : ''} en historial
-        </div>
-      )}
+      <style>{`@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>
     </div>
   )
-}
-
-// ── Función para registrar un PDF desde ExportPDFButton / DayDetailPDFButton ──
-export async function registerPdfInHistory(
-  token: string,
-  data: {
-    project_id?: number
-    project_name: string
-    pdf_type: 'forecast_5d' | 'hourly' | 'day_detail'
-    filename: string
-    location?: string
-    shoot_date?: string
-  }
-): Promise<void> {
-  try {
-    await fetch('/api/pdf-history', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(data),
-    })
-  } catch (err) {
-    console.warn('No se pudo registrar PDF en historial:', err)
-  }
 }

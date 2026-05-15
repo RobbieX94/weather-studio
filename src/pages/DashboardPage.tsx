@@ -1297,7 +1297,7 @@ export function DashboardPage() {
             <ReportsSection userId={String(user.id)} />
 
               {/* ── Historial Studio ── */}
-              <PdfHistoryPanel token={token} />
+              <PdfHistoryPanel userId={String(user.id)} />
           </motion.div>
         )}
 
@@ -1362,3 +1362,4 @@ export function DashboardPage() {
     </div>
   )
 }
+
