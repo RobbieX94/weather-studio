@@ -1,18 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Cloud, Menu, X, User, LogOut, Settings, ChevronDown } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 const NAVBAR_HEIGHT = 68
-
-// Páginas donde el hero ocupa toda la pantalla y gestiona su propio padding
 const FULLSCREEN_ROUTES = ['/', '/landing']
 
-export function Layout({ children }: { children: React.ReactNode }) {
+export function Layout() {
   const [scrolled, setScrolled] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
-  const profileRef = useRef<HTMLDivElement>(null)
+  const profileRef = useRef<HTMLDivElement | null>(null)
   const location = useLocation()
   const navigate = useNavigate()
   const { isAuthenticated, user, logout, planLabel } = useAuth()
@@ -28,7 +26,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setMenuOpen(false)
     setProfileOpen(false)
-  }, [location])
+  }, [location.pathname])
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -36,13 +34,18 @@ export function Layout({ children }: { children: React.ReactNode }) {
         setProfileOpen(false)
       }
     }
+
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  function handleLogout() {
-    logout()
-    navigate('/')
+  async function handleLogout() {
+    try {
+      await logout()
+      navigate('/')
+    } catch (error) {
+      console.error('Logout error:', error)
+    }
   }
 
   const navLinks = [
@@ -52,316 +55,122 @@ export function Layout({ children }: { children: React.ReactNode }) {
   ]
 
   const initials = user?.name
-    ? user.name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
+    ? user.name
+        .split(' ')
+        .map((n) => n[0])
+        .slice(0, 2)
+        .join('')
+        .toUpperCase()
     : '?'
 
   const planColors: Record<string, string> = {
     free: '#64748b',
     basico: '#3b82f6',
+    freelancepro: '#06b6d4',
     freelance_pro: '#06b6d4',
     studio: '#8b5cf6',
   }
-  const planColor = user ? (planColors[user.plan] ?? '#64748b') : '#64748b'
+
+  const planColor = user ? planColors[user.plan] ?? '#64748b' : '#64748b'
+
+  const headerStyle: React.CSSProperties = {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
+    height: NAVBAR_HEIGHT,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '0 20px',
+    background: scrolled ? 'rgba(7,17,31,0.88)' : 'rgba(7,17,31,0.45)',
+    backdropFilter: 'blur(14px)',
+    borderBottom: '1px solid rgba(255,255,255,0.08)',
+  }
+
+  const shellStyle: React.CSSProperties = {
+    minHeight: '100vh',
+    background: '#07111f',
+    color: '#e5eefb',
+  }
+
+  const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
+    color: isActive ? '#ffffff' : '#94a3b8',
+    textDecoration: 'none',
+    fontSize: 14,
+    fontWeight: 600,
+  })
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-
-      {/* ── NAVBAR ───────────────────────────────────────────────────────── */}
-      <header style={{
-        position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
-        height: NAVBAR_HEIGHT,
-        transition: 'all 0.3s ease',
-        background: scrolled ? 'rgba(5,13,26,0.92)' : 'transparent',
-        backdropFilter: scrolled ? 'blur(20px)' : 'none',
-        borderBottom: scrolled ? '1px solid rgba(255,255,255,0.06)' : '1px solid transparent',
-      }}>
-        <div className="container" style={{
-          display: 'flex', alignItems: 'center',
-          justifyContent: 'space-between', height: '100%',
-        }}>
-          {/* Logo */}
-          <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{
-              width: 38, height: 38, borderRadius: 12,
-              background: 'linear-gradient(135deg, #3b82f6, #06b6d4)',
-              display: 'grid', placeItems: 'center',
-              boxShadow: '0 4px 16px rgba(59,130,246,0.4)',
-            }}>
-              <Cloud size={20} color="white" strokeWidth={2} />
+    <div style={shellStyle}>
+      <header style={headerStyle}>
+        <div style={{ width: '100%', maxWidth: 1280, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+          <Link to='/' style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
+            <div style={{ width: 40, height: 40, borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(59,130,246,0.14)', border: '1px solid rgba(59,130,246,0.25)' }}>
+              <Cloud size={18} color='#7dd3fc' />
             </div>
-            <span style={{
-              fontFamily: 'var(--font-display)',
-              fontWeight: 700, fontSize: 18,
-              background: 'linear-gradient(90deg, #f0f6ff, #7ab8ff)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-            }}>
-              Weather Studio
-            </span>
+            <div>
+              <div style={{ color: '#ffffff', fontSize: 14, fontWeight: 800, lineHeight: 1 }}>Weather Studio</div>
+              <div style={{ color: '#7dd3fc', fontSize: 11, marginTop: 2 }}>Forecast for production</div>
+            </div>
           </Link>
 
-          {/* Nav links — desktop */}
-          <nav className="hide-mobile" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            {navLinks.map(({ to, label }) => (
-              <NavLink key={to} to={to} end={to === '/'} style={({ isActive }) => ({
-                padding: '8px 16px', borderRadius: 'var(--radius-full)',
-                fontSize: 14, fontWeight: 500,
-                color: isActive ? 'white' : 'var(--color-text-muted)',
-                background: isActive ? 'rgba(59,130,246,0.15)' : 'transparent',
-                border: isActive ? '1px solid rgba(59,130,246,0.3)' : '1px solid transparent',
-                transition: 'all var(--transition)',
-              })}>
-                {label}
-              </NavLink>
-            ))}
-          </nav>
+          <nav style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+            <div className='desktop-nav' style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+              {navLinks.map((link) => (
+                <NavLink key={link.to} to={link.to} style={navLinkStyle} end={link.to === '/'}>
+                  {link.label}
+                </NavLink>
+              ))}
+            </div>
 
-          {/* Derecha — desktop */}
-          <div className="hide-mobile" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {isAuthenticated && user ? (
+            {!isAuthenticated ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Link to='/login' style={{ textDecoration: 'none', color: '#e2e8f0', fontSize: 14, fontWeight: 600 }}>
+                  Iniciar sesión
+                </Link>
+                <Link to='/register?plan=free' style={{ textDecoration: 'none', background: '#22d3ee', color: '#082f49', padding: '10px 14px', borderRadius: 999, fontWeight: 700, fontSize: 14 }}>
+                  Registrarme
+                </Link>
+              </div>
+            ) : (
               <div ref={profileRef} style={{ position: 'relative' }}>
-                <button
-                  onClick={() => setProfileOpen(!profileOpen)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '6px 14px 6px 6px',
-                    background: profileOpen ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.06)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    borderRadius: 'var(--radius-full)',
-                    color: 'var(--color-text)',
-                    transition: 'all var(--transition)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <div style={{
-                    width: 32, height: 32, borderRadius: '50%',
-                    background: `linear-gradient(135deg, ${planColor}, ${planColor}99)`,
-                    display: 'grid', placeItems: 'center',
-                    fontSize: 12, fontWeight: 700, color: 'white', flexShrink: 0,
-                  }}>
-                    {initials}
-                  </div>
+                <button onClick={() => setProfileOpen((v) => !v)} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 999, color: '#fff', padding: '8px 12px', cursor: 'pointer' }}>
+                  <div style={{ width: 34, height: 34, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: `${planColor}22`, color: planColor, fontSize: 12, fontWeight: 800 }}>{initials}</div>
                   <div style={{ textAlign: 'left' }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.2 }}>
-                      {user.name.split(' ')[0]}
-                    </div>
-                    <div style={{ fontSize: 11, color: planColor, fontWeight: 600 }}>
-                      {planLabel()}
-                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1 }}>{user?.name ?? 'Usuario'}</div>
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>{planLabel?.() ?? 'Plan'}</div>
                   </div>
-                  <ChevronDown size={14} color="var(--color-text-muted)"
-                    style={{ transition: 'transform 0.2s', transform: profileOpen ? 'rotate(180deg)' : 'rotate(0deg)' }} />
+                  <ChevronDown size={16} color='#94a3b8' />
                 </button>
 
-                {/* Dropdown */}
                 {profileOpen && (
-                  <div style={{
-                    position: 'absolute', top: 'calc(100% + 10px)', right: 0,
-                    width: 220,
-                    background: 'rgba(7,18,36,0.97)',
-                    backdropFilter: 'blur(20px)',
-                    border: '1px solid var(--color-border-2)',
-                    borderRadius: 'var(--radius-lg)',
-                    boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
-                    overflow: 'hidden', zIndex: 200,
-                  }}>
-                    <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--color-border)' }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{user.name}</div>
-                      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>{user.email}</div>
-                      <div style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 5,
-                        padding: '2px 10px', borderRadius: 'var(--radius-full)',
-                        background: `${planColor}18`, border: `1px solid ${planColor}33`,
-                        fontSize: 11, color: planColor, fontWeight: 700,
-                      }}>
-                        Plan {planLabel()}
-                      </div>
-                    </div>
-
-                    <div style={{ padding: '6px' }}>
-                      {[
-                        { label: 'Mi panel', icon: <User size={15} color="var(--color-text-muted)" />, path: '/dashboard' },
-                        { label: 'Configuración', icon: <Settings size={15} color="var(--color-text-muted)" />, path: '/profile' },
-                      ].map(item => (
-                        <button key={item.path}
-                          onClick={() => { navigate(item.path); setProfileOpen(false) }}
-                          style={{
-                            width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-                            padding: '10px 12px', borderRadius: 10,
-                            color: 'var(--color-text)', fontSize: 13, fontWeight: 500,
-                            transition: 'background var(--transition)', textAlign: 'left',
-                          }}
-                          onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
-                          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                          {item.icon} {item.label}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div style={{ padding: '6px', borderTop: '1px solid var(--color-border)' }}>
-                      <button onClick={handleLogout}
-                        style={{
-                          width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-                          padding: '10px 12px', borderRadius: 10,
-                          color: 'var(--color-error)', fontSize: 13, fontWeight: 500,
-                          transition: 'background var(--transition)', textAlign: 'left',
-                        }}
-                        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(239,68,68,0.08)')}
-                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                        <LogOut size={15} /> Cerrar sesión
-                      </button>
-                    </div>
+                  <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 10px)', width: 220, borderRadius: 16, background: '#0f172a', border: '1px solid rgba(255,255,255,0.08)', boxShadow: '0 20px 50px rgba(0,0,0,0.35)', overflow: 'hidden' }}>
+                    <button onClick={() => navigate('/profile')} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', background: 'transparent', border: 'none', color: '#e2e8f0', cursor: 'pointer' }}>
+                      <User size={16} /> Perfil
+                    </button>
+                    <button onClick={() => navigate('/dashboard')} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', background: 'transparent', border: 'none', color: '#e2e8f0', cursor: 'pointer' }}>
+                      <Settings size={16} /> Dashboard
+                    </button>
+                    <button onClick={handleLogout} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', background: 'transparent', border: 'none', color: '#fca5a5', cursor: 'pointer' }}>
+                      <LogOut size={16} /> Cerrar sesión
+                    </button>
                   </div>
                 )}
               </div>
-            ) : (
-              <>
-                <Link to="/login" className="btn-ghost" style={{ padding: '9px 20px', fontSize: 14 }}>
-                  Iniciar sesión
-                </Link>
-                <Link to="/login" className="btn-primary" style={{ padding: '9px 20px', fontSize: 14 }}>
-                  Registrarse
-                </Link>
-              </>
             )}
-          </div>
 
-          {/* Botón menú móvil */}
-          <button className="hide-desktop" onClick={() => setMenuOpen(!menuOpen)}
-            style={{ color: 'var(--color-text)', padding: 8, background: 'none', border: 'none', cursor: 'pointer' }}>
-            {menuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
+            <button onClick={() => setMenuOpen((v) => !v)} style={{ display: 'none', background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer' }} aria-label='Abrir menú'>
+              {menuOpen ? <X size={20} /> : <Menu size={20} />}
+            </button>
+          </nav>
         </div>
-
-        {/* Menú móvil desplegable */}
-        {menuOpen && (
-          <div style={{
-            background: 'rgba(5,13,26,0.97)',
-            backdropFilter: 'blur(20px)',
-            borderTop: '1px solid var(--color-border)',
-            padding: '16px 24px 24px',
-          }}>
-            {navLinks.map(({ to, label }) => (
-              <Link key={to} to={to} style={{
-                display: 'block', padding: '14px 0',
-                borderBottom: '1px solid var(--color-border)',
-                color: 'var(--color-text)', fontWeight: 500,
-              }}>
-                {label}
-              </Link>
-            ))}
-            {isAuthenticated && user ? (
-              <div style={{ marginTop: 20 }}>
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '12px 0', marginBottom: 12,
-                  borderBottom: '1px solid var(--color-border)',
-                }}>
-                  <div style={{
-                    width: 40, height: 40, borderRadius: '50%',
-                    background: `linear-gradient(135deg, ${planColor}, ${planColor}99)`,
-                    display: 'grid', placeItems: 'center',
-                    fontSize: 14, fontWeight: 700, color: 'white',
-                  }}>
-                    {initials}
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{user.name}</div>
-                    <div style={{ fontSize: 12, color: planColor, fontWeight: 600 }}>Plan {planLabel()}</div>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <Link to="/dashboard" className="btn-ghost" style={{ flex: 1, justifyContent: 'center', fontSize: 14 }}>
-                    Mi panel
-                  </Link>
-                  <button onClick={handleLogout} className="btn-ghost"
-                    style={{ flex: 1, justifyContent: 'center', fontSize: 14, color: 'var(--color-error)' }}>
-                    Cerrar sesión
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-                <Link to="/login" className="btn-ghost" style={{ flex: 1, justifyContent: 'center', fontSize: 14 }}>
-                  Iniciar sesión
-                </Link>
-                <Link to="/login" className="btn-primary" style={{ flex: 1, justifyContent: 'center', fontSize: 14 }}>
-                  Empezar
-                </Link>
-              </div>
-            )}
-          </div>
-        )}
       </header>
 
-      {/* ── CONTENIDO PRINCIPAL ──────────────────────────────────────────── */}
-      {/* paddingTop compensa el navbar fijo excepto en páginas fullscreen   */}
-      <main style={{
-        flex: 1,
-        paddingTop: isFullscreen ? 0 : NAVBAR_HEIGHT,
-      }}>
-        {children}
+      <main style={{ paddingTop: isFullscreen ? 0 : NAVBAR_HEIGHT }}>
+        <Outlet />
       </main>
-
-      {/* ── FOOTER ───────────────────────────────────────────────────────── */}
-      <footer style={{
-        borderTop: '1px solid var(--color-border)',
-        padding: '48px 0 32px',
-        background: 'rgba(0,0,0,0.3)',
-      }}>
-        <div className="container">
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-            gap: 40, marginBottom: 40,
-          }}>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                <div style={{
-                  width: 32, height: 32, borderRadius: 10,
-                  background: 'linear-gradient(135deg, #3b82f6, #06b6d4)',
-                  display: 'grid', placeItems: 'center',
-                }}>
-                  <Cloud size={16} color="white" />
-                </div>
-                <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700 }}>Weather Studio</span>
-              </div>
-              <p style={{ color: 'var(--color-text-muted)', fontSize: 14, lineHeight: 1.7, maxWidth: '28ch' }}>
-                Inteligencia meteorológica para producciones audiovisuales profesionales.
-              </p>
-            </div>
-            <div>
-              <h4 style={{ fontWeight: 600, marginBottom: 16, fontSize: 14 }}>Producto</h4>
-              {['Inicio', 'Panel de usuario', 'Precios'].map(item => (
-                <div key={item} style={{ marginBottom: 10 }}>
-                  <span style={{ color: 'var(--color-text-muted)', fontSize: 14, cursor: 'pointer' }}>{item}</span>
-                </div>
-              ))}
-            </div>
-            <div>
-              <h4 style={{ fontWeight: 600, marginBottom: 16, fontSize: 14 }}>Empresa</h4>
-              {['Sobre nosotros', 'Contacto'].map(item => (
-                <div key={item} style={{ marginBottom: 10 }}>
-                  <span style={{ color: 'var(--color-text-muted)', fontSize: 14, cursor: 'pointer' }}>{item}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div style={{
-            borderTop: '1px solid var(--color-border)',
-            paddingTop: 24,
-            display: 'flex', justifyContent: 'space-between',
-            alignItems: 'center', flexWrap: 'wrap', gap: 12,
-          }}>
-            <span style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>
-              © 2026 Weather Studio. Todos los derechos reservados.
-            </span>
-            <span style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>
-              Powered by OpenWeatherMap · Gemini AI
-            </span>
-          </div>
-        </div>
-      </footer>
     </div>
   )
 }
