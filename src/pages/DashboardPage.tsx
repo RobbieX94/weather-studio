@@ -140,18 +140,89 @@ async function generatePDF5Days(project: Project, ai: AiAnalysis) {
   const doc = new JsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const W = 210, M = 16, colW = W - M * 2
   let y = 18
-  const sf = (h: string) => doc.setFillColor(...h2r(h))
-  const sd = (h: string) => doc.setDrawColor(...h2r(h))
-  const st = (h: string) => doc.setTextColor(...h2r(h))
-  const checkPage = (n = 20) => { if (y + n > 280) { doc.addPage(); y = 16; sf('#ffffff'); doc.rect(0,0,W,297,'F') } }
-  sf('#07121f'); doc.rect(0,0,W,297,'F'); st('#60a5fa'); doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text('WEATHER STUDIO',M,22); st('#f8fafc'); doc.setFontSize(24); doc.text(doc.splitTextToSize(project.name,colW),M,48); st('#cbd5e1'); doc.setFontSize(11); doc.text(`Ubicación: ${project.location}`,M,70); doc.text(`Fecha de rodaje: ${project.shoot_date}`,M,78); doc.text(`Mejor día: ${ai.mejor_dia || '-'}`,M,86)
-  doc.addPage(); y = 18; sf('#ffffff'); doc.rect(0,0,W,297,'F')
-  if (ai.resumen) { const lines = doc.splitTextToSize(ai.resumen, colW-12); const h = lines.length*5+14; sf('#eff6ff'); sd('#60a5fa'); doc.roundedRect(M,y,colW,h,3,3,'FD'); st('#2563eb'); doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.text('ANÁLISIS IA',M+6,y+6); st('#1e293b'); doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.text(lines,M+6,y+12); y += h + 10 }
-  ai.forecast?.forEach((day: any) => { checkPage(34); const color = riskColor(day.riesgo); const bg = day.riesgo==='alto'?'#fef2f2':day.riesgo==='medio'?'#fffbeb':'#f0fdf4'; sf(bg); sd(color); doc.roundedRect(M,y,colW,28,3,3,'FD'); st('#0f172a'); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(`${day.icon} ${day.label} — ${day.date}`,M+6,y+8); st(color); doc.setFontSize(8); doc.text((day.riesgo||'').toUpperCase(),W-M-18,y+8); st('#475569'); doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.text(`Tmax: ${day.tempMax}°C · Tmin: ${day.tempMin}°C · Lluvia: ${day.precipitation}mm · Viento: ${day.windSpeed}km/h · UV: ${day.uvIndex}`,M+6,y+15); const rec = doc.splitTextToSize(day.recomendacion,colW-12); st('#1e293b'); doc.text(rec.slice(0,1),M+6,y+22); y += 34 })
+
+  const sf = (h: string) => { try { doc.setFillColor(...h2r(h)) } catch {} }
+  const sd = (h: string) => { try { doc.setDrawColor(...h2r(h)) } catch {} }
+  const st = (h: string) => { try { doc.setTextColor(...h2r(h)) } catch {} }
+  const safeText = (t: string) => String(t ?? '').replace(/[^\x00-\x7F]/g, c => c)
+  const checkPage = (n = 20) => {
+    if (y + n > 280) {
+      doc.addPage(); y = 16
+      sf('#ffffff'); doc.rect(0, 0, W, 297, 'F')
+    }
+  }
+
+  // ── Portada ──
+  sf('#07121f'); doc.rect(0, 0, W, 297, 'F')
+  st('#60a5fa'); doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
+  doc.text('WEATHER STUDIO', M, 22)
+  st('#f8fafc'); doc.setFontSize(22)
+  doc.text(doc.splitTextToSize(safeText(project.name), colW), M, 48)
+  st('#cbd5e1'); doc.setFontSize(10)
+  doc.text(`Ubicacion: ${safeText(project.location)}`, M, 70)
+  doc.text(`Fecha de rodaje: ${safeText(project.shoot_date)}`, M, 78)
+  doc.text(`Mejor dia: ${safeText(ai?.mejor_dia || '-')}`, M, 86)
+  doc.text(`Generado: ${new Date().toLocaleDateString('es-ES')}`, M, 94)
+
+  // ── Página resumen IA ──
+  doc.addPage(); y = 18
+  sf('#ffffff'); doc.rect(0, 0, W, 297, 'F')
+
+  const resumen = ai?.resumen ?? ''
+  if (resumen) {
+    const lines = doc.splitTextToSize(safeText(resumen), colW - 12)
+    const blockH = lines.length * 5 + 14
+    sf('#eff6ff'); sd('#60a5fa')
+    doc.roundedRect(M, y, colW, blockH, 3, 3, 'FD')
+    st('#2563eb'); doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
+    doc.text('ANALISIS IA', M + 6, y + 6)
+    st('#1e293b'); doc.setFont('helvetica', 'normal'); doc.setFontSize(10)
+    doc.text(lines, M + 6, y + 12)
+    y += blockH + 10
+  }
+
+  // ── Días del forecast ──
+  const forecast = Array.isArray(ai?.forecast) ? ai.forecast : []
+  if (forecast.length === 0) {
+    checkPage(30)
+    st('#64748b'); doc.setFont('helvetica', 'italic'); doc.setFontSize(10)
+    doc.text('No hay datos de forecast disponibles para este proyecto.', M, y + 10)
+    y += 20
+  }
+
+  forecast.forEach((day: any) => {
+    checkPage(38)
+    const color = riskColor(day?.riesgo)
+    const bg = day?.riesgo === 'alto' ? '#fef2f2' : day?.riesgo === 'medio' ? '#fffbeb' : '#f0fdf4'
+    sf(bg); sd(color)
+    doc.roundedRect(M, y, colW, 30, 3, 3, 'FD')
+    st('#0f172a'); doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
+    const dayTitle = safeText(`${day?.label ?? ''} - ${day?.date ?? ''}`)
+    doc.text(dayTitle, M + 6, y + 8)
+    st(color); doc.setFontSize(8)
+    doc.text(safeText((day?.riesgo ?? '').toUpperCase()), W - M - 20, y + 8)
+    st('#475569'); doc.setFont('helvetica', 'normal'); doc.setFontSize(8)
+    const statsLine = `Tmax: ${day?.tempMax ?? '-'}C  Tmin: ${day?.tempMin ?? '-'}C  Lluvia: ${day?.precipitation ?? '-'}mm  Viento: ${day?.windSpeed ?? '-'}km/h  UV: ${day?.uvIndex ?? '-'}`
+    doc.text(safeText(statsLine), M + 6, y + 16)
+    const rec = doc.splitTextToSize(safeText(day?.recomendacion ?? ''), colW - 12)
+    st('#1e293b')
+    doc.text(rec.slice(0, 1), M + 6, y + 23)
+    y += 38
+  })
+
+  // ── Pie de página ──
   const total = doc.getNumberOfPages()
-  for (let i = 1; i <= total; i++) { doc.setPage(i); sf('#f1f5f9'); doc.rect(0,285,W,12,'F'); st('#94a3b8'); doc.setFontSize(7); doc.text('WEATHER STUDIO · Informe meteorológico',M,291); doc.text(`Pág. ${i} de ${total}`,W-M-10,291) }
-  const fileName = `ws-forecast-${project.name.toLowerCase().replace(/\s+/g,'-')}-${project.shoot_date}.pdf`
-  doc.save(fileName); return fileName
+  for (let i = 1; i <= total; i++) {
+    doc.setPage(i)
+    sf('#f1f5f9'); doc.rect(0, 285, W, 12, 'F')
+    st('#94a3b8'); doc.setFontSize(7)
+    doc.text('WEATHER STUDIO - Informe meteorologico', M, 291)
+    doc.text(`Pag. ${i} de ${total}`, W - M - 10, 291)
+  }
+
+  const fileName = `ws-forecast-${project.name.toLowerCase().replace(/\s+/g, '-')}-${project.shoot_date}.pdf`
+  doc.save(fileName)
+  return fileName
 }
 
 async function generatePDFHourly(project: Project, date: string, hours: HourlySlot[], advanced: boolean) {
@@ -179,38 +250,38 @@ async function generatePDFHourly(project: Project, date: string, hours: HourlySl
   doc.save(fileName); return fileName
 }
 
-// ─── Design Tokens ────────────────────────────────────────────────────────────
+// ─── Design Tokens (alineados con HomePage) ───────────────────────────────────
 const C = {
-  bg: '#060d18',
+  bg: '#07111f',
   bgDeep: '#040a12',
-  surface: 'rgba(255,255,255,0.032)',
-  surfaceHover: 'rgba(255,255,255,0.055)',
-  border: 'rgba(255,255,255,0.072)',
-  borderStrong: 'rgba(255,255,255,0.13)',
-  text: '#eef2ff',
-  textMuted: '#8896b0',
-  textSubtle: '#4a5568',
+  surface: 'rgba(255,255,255,0.04)',
+  surfaceHover: 'rgba(255,255,255,0.07)',
+  border: 'rgba(255,255,255,0.08)',
+  borderStrong: 'rgba(255,255,255,0.14)',
+  text: '#ffffff',
+  textMuted: '#94a3b8',
+  textSubtle: '#475569',
   blue: '#3b82f6',
-  blueDim: 'rgba(59,130,246,0.15)',
+  blueDim: 'rgba(59,130,246,0.12)',
   cyan: '#22d3ee',
-  cyanDim: 'rgba(34,211,238,0.12)',
+  cyanDim: 'rgba(34,211,238,0.10)',
   green: '#10b981',
-  greenDim: 'rgba(16,185,129,0.12)',
+  greenDim: 'rgba(16,185,129,0.10)',
   amber: '#f59e0b',
-  amberDim: 'rgba(245,158,11,0.12)',
+  amberDim: 'rgba(245,158,11,0.10)',
   red: '#ef4444',
-  redDim: 'rgba(239,68,68,0.10)',
+  redDim: 'rgba(239,68,68,0.08)',
   violet: '#8b5cf6',
-  violetDim: 'rgba(139,92,246,0.12)',
+  violetDim: 'rgba(139,92,246,0.10)',
 }
 
-// ─── Ambient Background Orbs ──────────────────────────────────────────────────
+// ─── Ambient Background Orbs (alineados con HomePage) ────────────────────────
 function AmbientOrbs() {
   return (
     <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 0, overflow: 'hidden' }}>
-      <div style={{ position: 'absolute', top: '10%', left: '15%', width: 600, height: 600, borderRadius: '50%', background: 'radial-gradient(circle, rgba(59,130,246,0.06) 0%, transparent 65%)', filter: 'blur(40px)' }} />
-      <div style={{ position: 'absolute', bottom: '20%', right: '10%', width: 500, height: 500, borderRadius: '50%', background: 'radial-gradient(circle, rgba(34,211,238,0.05) 0%, transparent 65%)', filter: 'blur(40px)' }} />
-      <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', width: 800, height: 400, borderRadius: '50%', background: 'radial-gradient(ellipse, rgba(139,92,246,0.03) 0%, transparent 70%)', filter: 'blur(60px)' }} />
+      <div style={{ position: 'absolute', top: '8%', left: '12%', width: 700, height: 700, borderRadius: '50%', background: 'radial-gradient(circle, rgba(34,211,238,0.05) 0%, transparent 65%)', filter: 'blur(50px)' }} />
+      <div style={{ position: 'absolute', bottom: '15%', right: '8%', width: 600, height: 600, borderRadius: '50%', background: 'radial-gradient(circle, rgba(59,130,246,0.06) 0%, transparent 65%)', filter: 'blur(50px)' }} />
+      <div style={{ position: 'absolute', top: '45%', left: '45%', transform: 'translate(-50%,-50%)', width: 900, height: 500, borderRadius: '50%', background: 'radial-gradient(ellipse, rgba(139,92,246,0.025) 0%, transparent 70%)', filter: 'blur(70px)' }} />
     </div>
   )
 }
@@ -287,23 +358,24 @@ function Shell({ title, badge, badgeColor, children, action }: {
   return (
     <div style={{
       position: 'relative', overflow: 'hidden',
-      background: 'rgba(8,14,24,0.85)',
-      border: `1px solid ${C.border}`,
+      background: 'rgba(255,255,255,0.035)',
+      border: '1px solid rgba(255,255,255,0.08)',
       borderRadius: 24, padding: 24,
       backdropFilter: 'blur(20px)',
+      WebkitBackdropFilter: 'blur(20px)',
     }}>
-      {/* Top gradient line */}
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(90deg, transparent, rgba(59,130,246,0.4), transparent)' }} />
+      {/* Top gradient accent — igual que HomePage cards */}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(90deg, transparent, rgba(34,211,238,0.3), transparent)' }} />
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <h2 style={{ fontSize: 15, fontWeight: 800, color: C.text, margin: 0, letterSpacing: '-0.01em' }}>{title}</h2>
+          <h2 style={{ fontSize: 15, fontWeight: 700, color: '#ffffff', margin: 0, letterSpacing: '-0.01em', fontFamily: "'Sora', system-ui, sans-serif" }}>{title}</h2>
           {badge && (
             <span style={{
-              fontSize: 9, fontWeight: 900, padding: '3px 8px', borderRadius: 6,
-              background: badgeColor ? `${badgeColor}18` : C.blueDim,
-              border: `1px solid ${badgeColor ? `${badgeColor}30` : 'rgba(59,130,246,0.25)'}`,
-              color: badgeColor || '#93c5fd',
+              fontSize: 9, fontWeight: 800, padding: '3px 8px', borderRadius: 6,
+              background: badgeColor ? `${badgeColor}18` : 'rgba(34,211,238,0.1)',
+              border: `1px solid ${badgeColor ? `${badgeColor}30` : 'rgba(34,211,238,0.2)'}`,
+              color: badgeColor || '#22d3ee',
               letterSpacing: '0.08em', textTransform: 'uppercase',
             }}>
               {badge}
@@ -832,37 +904,78 @@ function ProjectPanel({ project, canExportPDF, canExportDayPDF, isAdvanced }: {
         <div style={{ color: C.textSubtle, fontSize: 13, padding: '20px 0' }}>Sin análisis disponible para este proyecto.</div>
       )}
 
-      {/* Export */}
-      {canExportPDF && (
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
-          marginTop: 20, paddingTop: 18, borderTop: `1px solid ${C.border}`,
-        }}>
-          <div style={{ fontSize: 12, color: exportStatus.startsWith('✅') ? C.green : exportStatus.startsWith('❌') ? C.red : C.textMuted }}>
-            {exporting && <Loader2 size={12} style={{ display: 'inline-block', marginRight: 6, animation: 'spin .8s linear infinite' }} />}
-            {exportStatus || 'Exporta informes PDF de este proyecto'}
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={handleExport5Days} disabled={exporting || !ai} style={{
-              padding: '8px 14px', borderRadius: 10, border: `1px solid rgba(59,130,246,0.25)`,
-              background: C.blueDim, color: '#93c5fd', fontWeight: 800, fontSize: 12, cursor: 'pointer',
-              display: 'inline-flex', alignItems: 'center', gap: 6, transition: 'all 0.15s',
-            }}>
-              <FileText size={13} /> PDF 5 días
-            </button>
-            <button onClick={handleExportHourly} disabled={exporting || !canExportDayPDF} style={{
-              padding: '8px 14px', borderRadius: 10,
-              border: canExportDayPDF ? `1px solid rgba(34,211,238,0.25)` : `1px solid ${C.border}`,
-              background: canExportDayPDF ? C.cyanDim : C.surface,
-              color: canExportDayPDF ? C.cyan : C.textSubtle, fontWeight: 800, fontSize: 12,
-              cursor: canExportDayPDF ? 'pointer' : 'not-allowed',
-              display: 'inline-flex', alignItems: 'center', gap: 6, transition: 'all 0.15s',
-            }}>
-              <Clock3 size={13} /> {canExportDayPDF ? 'Parte horario' : '🔒 Freelance Pro'}
-            </button>
-          </div>
+      {/* Export — siempre visible, bloqueado según plan */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
+        marginTop: 24, paddingTop: 20, borderTop: `1px solid rgba(255,255,255,0.08)`,
+      }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: '#eef2ff' }}>Exportar informe PDF</span>
+          <span style={{
+            fontSize: 12,
+            color: exportStatus.startsWith('✅') ? '#10b981'
+              : exportStatus.startsWith('❌') ? '#ef4444'
+              : '#8896b0',
+            display: 'flex', alignItems: 'center', gap: 5,
+          }}>
+            {exporting && <Loader2 size={11} style={{ animation: 'spin .8s linear infinite' }} />}
+            {exportStatus || 'Descarga el análisis completo de este proyecto'}
+          </span>
         </div>
-      )}
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {/* PDF 5 días — disponible para todos los planes con ai */}
+          <button
+            onClick={handleExport5Days}
+            disabled={exporting || !ai}
+            title={!ai ? 'No hay análisis disponible' : 'Descargar forecast 5 días'}
+            style={{
+              padding: '10px 18px', borderRadius: 12,
+              border: '1px solid rgba(59,130,246,0.35)',
+              background: (!ai || exporting)
+                ? 'rgba(59,130,246,0.05)'
+                : 'linear-gradient(135deg, rgba(59,130,246,0.2), rgba(59,130,246,0.1))',
+              color: (!ai || exporting) ? '#4a5568' : '#93c5fd',
+              fontWeight: 800, fontSize: 12, cursor: (!ai || exporting) ? 'not-allowed' : 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 7,
+              transition: 'all 0.15s',
+              boxShadow: (!ai || exporting) ? 'none' : '0 0 16px rgba(59,130,246,0.15)',
+            }}
+            onMouseEnter={e => { if (ai && !exporting) (e.currentTarget as any).style.boxShadow = '0 0 24px rgba(59,130,246,0.3)' }}
+            onMouseLeave={e => { (e.currentTarget as any).style.boxShadow = (!ai || exporting) ? 'none' : '0 0 16px rgba(59,130,246,0.15)' }}
+          >
+            <FileText size={14} />
+            {exporting ? 'Generando...' : 'PDF 5 días'}
+          </button>
+
+          {/* Parte horario — requiere plan Freelance Pro+ */}
+          <button
+            onClick={handleExportHourly}
+            disabled={exporting}
+            title={!canExportDayPDF ? 'Disponible en Freelance Pro y Studio' : 'Descargar parte horario con IA'}
+            style={{
+              padding: '10px 18px', borderRadius: 12,
+              border: canExportDayPDF
+                ? '1px solid rgba(34,211,238,0.35)'
+                : `1px solid rgba(255,255,255,0.08)`,
+              background: canExportDayPDF
+                ? 'linear-gradient(135deg, rgba(34,211,238,0.15), rgba(34,211,238,0.08))'
+                : 'rgba(255,255,255,0.03)',
+              color: canExportDayPDF ? '#22d3ee' : '#4a5568',
+              fontWeight: 800, fontSize: 12,
+              cursor: exporting ? 'not-allowed' : 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 7,
+              transition: 'all 0.15s',
+              boxShadow: canExportDayPDF ? '0 0 16px rgba(34,211,238,0.1)' : 'none',
+            }}
+            onMouseEnter={e => { if (canExportDayPDF && !exporting) (e.currentTarget as any).style.boxShadow = '0 0 24px rgba(34,211,238,0.25)' }}
+            onMouseLeave={e => { (e.currentTarget as any).style.boxShadow = canExportDayPDF ? '0 0 16px rgba(34,211,238,0.1)' : 'none' }}
+          >
+            <Clock3 size={14} />
+            {canExportDayPDF ? 'Parte horario IA' : '🔒 Freelance Pro'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -965,25 +1078,26 @@ export function DashboardPage() {
   ], [projects.length, projectLimit, canUseAdvancedAI, canUseAI, canExportPDF])
 
   return (
-    <div style={{ minHeight: '100vh', paddingTop: 68, display: 'flex', background: C.bg, position: 'relative' }}>
+    <div style={{ minHeight: '100vh', paddingTop: 68, display: 'flex', background: '#07111f', position: 'relative' }}>
       <AmbientOrbs />
       <ScanLines />
 
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
       <aside style={{
         width: sidebarOpen ? 232 : 68, transition: 'width 0.22s cubic-bezier(0.4,0,0.2,1)',
-        borderRight: `1px solid ${C.border}`,
-        borderLeft: `1px solid ${C.borderStrong}`,
-        borderTop: `1px solid ${C.borderStrong}`,
-        borderBottom: `1px solid ${C.borderStrong}`,
-        borderRadius: '20px 20px 20px 20px',
-        background: 'rgba(5,10,20,0.94)',
-        position: 'sticky', top: 68,
-        height: 'calc(50vh - 34px)',
+        borderRight: `1px solid rgba(255,255,255,0.08)`,
+        borderLeft: `1px solid rgba(255,255,255,0.06)`,
+        borderTop: `1px solid rgba(255,255,255,0.06)`,
+        borderBottom: `1px solid rgba(255,255,255,0.06)`,
+        borderRadius: 20,
+        background: 'rgba(7,17,31,0.95)',
+        position: 'sticky', top: 80,
+        height: 'calc(100vh - 100px)',
         padding: 10, display: 'flex', flexDirection: 'column', gap: 6,
         zIndex: 10, flexShrink: 0,
-        backdropFilter: 'blur(20px)',
-        
+        backdropFilter: 'blur(24px)',
+        WebkitBackdropFilter: 'blur(24px)',
+        margin: '12px 0 12px 12px',
       }}>
         {/* Toggle */}
         <button
@@ -1354,6 +1468,10 @@ export function DashboardPage() {
         @keyframes spin { to { transform: rotate(360deg); } }
         main p, main li, main span { max-width: none; }
         main button { font: inherit; }
+        * { box-sizing: border-box; }
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: #07111f; }
+        ::-webkit-scrollbar-thumb { background: rgba(34,211,238,0.25); border-radius: 99px; }
         @media (max-width: 900px) {
           aside { display: none !important; }
           main { padding: 20px 16px 72px !important; }
