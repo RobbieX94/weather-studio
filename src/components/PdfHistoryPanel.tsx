@@ -1,8 +1,9 @@
 // src/components/PdfHistoryPanel.tsx
 // Panel de historial de PDFs generados — lista, descarga y elimina desde Supabase Storage.
+// FIX: import unificado desde '../lib/supabase' · Diseño visual teal oscuro
 
 import React, { useEffect, useState } from 'react'
-import { FileText, Download, Trash2, Clock, RefreshCw } from 'lucide-react'
+import { FileText, Download, Trash2, Clock, RefreshCw, CloudOff } from 'lucide-react'
 import { supabase } from '../services/supabase'
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
@@ -27,14 +28,12 @@ export interface NewPdfPayload {
 }
 
 // ── Registro en historial + subida a Storage ──────────────────────────────────
-// Llamado desde ExportPDFButton tras generar el PDF
 
 export async function registerPdfInHistory(
   userId: string,
   payload: NewPdfPayload,
   blob: Blob
 ): Promise<void> {
-  // 1. Subir al bucket pdf_reports
   const { error: uploadError } = await supabase.storage
     .from('pdf_reports')
     .upload(payload.storage_path, blob, {
@@ -47,7 +46,6 @@ export async function registerPdfInHistory(
     throw uploadError
   }
 
-  // 2. Insertar registro en tabla pdf_history
   const { error: insertError } = await supabase
     .from('pdf_history')
     .insert({
@@ -75,9 +73,12 @@ export function PdfHistoryPanel({ userId }: Props) {
   const [records, setRecords] = useState<PdfRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   async function fetchHistory() {
     setLoading(true)
+    setError(null)
     const { data, error } = await supabase
       .from('pdf_history')
       .select('*')
@@ -85,19 +86,28 @@ export function PdfHistoryPanel({ userId }: Props) {
       .order('created_at', { ascending: false })
       .limit(50)
 
-    if (!error && data) setRecords(data as PdfRecord[])
+    if (error) {
+      setError('No se pudo cargar el historial. Verifica tu conexión.')
+      console.error('[PdfHistory] fetchHistory error:', error.message)
+    } else if (data) {
+      setRecords(data as PdfRecord[])
+    }
     setLoading(false)
   }
 
-  useEffect(() => { fetchHistory() }, [userId])
+  useEffect(() => {
+    if (userId) fetchHistory()
+  }, [userId])
 
   async function handleDownload(record: PdfRecord) {
+    setDownloadingId(record.id)
     const { data, error } = await supabase.storage
       .from('pdf_reports')
       .download(record.storage_path)
 
     if (error || !data) {
-      alert('No se pudo descargar el PDF. Puede que haya expirado.')
+      alert('No se pudo descargar el PDF. Puede que haya expirado o haya sido eliminado.')
+      setDownloadingId(null)
       return
     }
 
@@ -107,16 +117,14 @@ export function PdfHistoryPanel({ userId }: Props) {
     a.download = record.file_name
     a.click()
     URL.revokeObjectURL(url)
+    setDownloadingId(null)
   }
 
   async function handleDelete(record: PdfRecord) {
-    if (!confirm(`¿Eliminar "${record.file_name}"?`)) return
+    if (!confirm(`¿Eliminar "${record.file_name}" del historial y del almacenamiento?`)) return
     setDeletingId(record.id)
 
-    // 1. Eliminar del Storage
     await supabase.storage.from('pdf_reports').remove([record.storage_path])
-
-    // 2. Eliminar de la tabla
     await supabase.from('pdf_history').delete().eq('id', record.id)
 
     setRecords(r => r.filter(x => x.id !== record.id))
@@ -127,109 +135,224 @@ export function PdfHistoryPanel({ userId }: Props) {
     t === 'forecast_5d' ? 'Forecast 5 días' : 'Parte hora a hora'
 
   const typeColor = (t: PdfRecord['report_type']) =>
-    t === 'forecast_5d' ? '#3b82f6' : '#06b6d4'
+    t === 'forecast_5d' ? '#4f98a3' : '#06b6d4'
 
-  if (!records.length && !loading) {
+  const typeBg = (t: PdfRecord['report_type']) =>
+    t === 'forecast_5d' ? 'rgba(79,152,163,0.12)' : 'rgba(6,182,212,0.12)'
+
+  const typeBorder = (t: PdfRecord['report_type']) =>
+    t === 'forecast_5d' ? 'rgba(79,152,163,0.25)' : 'rgba(6,182,212,0.25)'
+
+  // ── Estado vacío ─────────────────────────────────────────────────────────────
+
+  if (!loading && !error && records.length === 0) {
     return (
-      <div style={{ textAlign: 'center', padding: '32px 16px', color: '#64748b' }}>
-        <FileText size={36} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
-        <p style={{ fontSize: 14, marginBottom: 4 }}>No hay PDFs generados todavía</p>
-        <p style={{ fontSize: 12, color: '#475569' }}>
-          Exporta tu primer informe desde cualquier proyecto
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        justifyContent: 'center', padding: '48px 24px', textAlign: 'center',
+        background: 'rgba(255,255,255,0.02)',
+        border: '1px dashed rgba(255,255,255,0.1)',
+        borderRadius: 16,
+      }}>
+        <div style={{
+          width: 52, height: 52, borderRadius: 14,
+          background: 'rgba(79,152,163,0.1)', border: '1px solid rgba(79,152,163,0.2)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          marginBottom: 16,
+        }}>
+          <FileText size={24} color="#4f98a3" />
+        </div>
+        <p style={{ color: '#f0f6ff', fontSize: 15, fontWeight: 600, marginBottom: 8 }}>
+          No hay informes generados todavía
+        </p>
+        <p style={{ color: '#64748b', fontSize: 13, maxWidth: 280 }}>
+          Exporta tu primer informe desde la vista de análisis de cualquier proyecto.
         </p>
       </div>
     )
   }
 
+  // ── Error ─────────────────────────────────────────────────────────────────────
+
+  if (error) {
+    return (
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        padding: '32px 24px', textAlign: 'center',
+        background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.15)',
+        borderRadius: 16,
+      }}>
+        <CloudOff size={28} color="#ef4444" style={{ marginBottom: 12 }} />
+        <p style={{ color: '#fca5a5', fontSize: 14, marginBottom: 16 }}>{error}</p>
+        <button
+          onClick={fetchHistory}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '8px 16px', borderRadius: 8,
+            background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)',
+            color: '#fca5a5', fontSize: 13, cursor: 'pointer',
+          }}
+        >
+          <RefreshCw size={13} /> Reintentar
+        </button>
+      </div>
+    )
+  }
+
+  // ── Lista principal ───────────────────────────────────────────────────────────
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+    <div>
       {/* Header */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)',
+        marginBottom: 16,
       }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: '#e2eaf5', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Clock size={14} /> Historial de informes PDF
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <FileText size={16} color="#4f98a3" />
+          <span style={{ color: '#f0f6ff', fontSize: 14, fontWeight: 600 }}>
+            Historial de informes PDF
+          </span>
+          <span style={{
+            background: 'rgba(79,152,163,0.15)', border: '1px solid rgba(79,152,163,0.25)',
+            color: '#4f98a3', fontSize: 11, fontWeight: 700,
+            padding: '1px 7px', borderRadius: 20,
+          }}>
+            {records.length}
+          </span>
         </div>
         <button
           onClick={fetchHistory}
           disabled={loading}
-          style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', padding: 4 }}
-          title="Actualizar"
+          title="Actualizar historial"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '5px 10px', borderRadius: 7,
+            background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+            color: '#64748b', fontSize: 12, cursor: loading ? 'wait' : 'pointer',
+          }}
         >
-          <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+          <RefreshCw size={12} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+          Actualizar
         </button>
       </div>
 
-      {/* Lista */}
-      <div style={{ maxHeight: 420, overflowY: 'auto' }}>
+      {/* Lista de registros */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {records.map(rec => (
           <div
             key={rec.id}
             style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '10px 16px', borderBottom: '1px solid rgba(255,255,255,0.04)',
-              gap: 10,
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: '12px 14px', borderRadius: 12,
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid rgba(255,255,255,0.07)',
+              transition: 'border-color 0.18s ease',
             }}
+            onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(79,152,163,0.2)')}
+            onMouseLeave={e => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)')}
           >
+            {/* Icono tipo */}
+            <div style={{
+              width: 36, height: 36, borderRadius: 9, flexShrink: 0,
+              background: typeBg(rec.report_type),
+              border: `1px solid ${typeBorder(rec.report_type)}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              {rec.report_type === 'forecast_5d'
+                ? <FileText size={16} color={typeColor(rec.report_type)} />
+                : <Clock size={16} color={typeColor(rec.report_type)} />
+              }
+            </div>
+
+            {/* Info */}
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                <span style={{
-                  fontSize: 10, fontWeight: 700, color: typeColor(rec.report_type),
-                  background: `${typeColor(rec.report_type)}18`,
-                  border: `1px solid ${typeColor(rec.report_type)}30`,
-                  borderRadius: 4, padding: '1px 5px',
-                }}>
-                  {typeLabel(rec.report_type)}
-                </span>
-                <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>
-                  {rec.project_name}
-                </span>
-              </div>
-              <div style={{ fontSize: 11, color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {/* Badge tipo */}
+              <span style={{
+                display: 'inline-block',
+                background: typeBg(rec.report_type),
+                border: `1px solid ${typeBorder(rec.report_type)}`,
+                color: typeColor(rec.report_type),
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.04em',
+                padding: '1px 7px', borderRadius: 20, marginBottom: 4,
+                textTransform: 'uppercase',
+              }}>
+                {typeLabel(rec.report_type)}
+              </span>
+
+              {/* Nombre proyecto */}
+              <p style={{
+                color: '#f0f6ff', fontSize: 13, fontWeight: 600,
+                margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}>
+                {rec.project_name}
+              </p>
+
+              {/* Nombre archivo */}
+              <p style={{
+                color: '#64748b', fontSize: 11, margin: '2px 0 0',
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}>
                 {rec.file_name}
-              </div>
-              <div style={{ fontSize: 10, color: '#475569', marginTop: 1 }}>
+              </p>
+
+              {/* Fecha */}
+              <p style={{ color: '#475569', fontSize: 10, margin: '3px 0 0' }}>
                 {new Date(rec.created_at).toLocaleString('es-ES', {
                   day: '2-digit', month: '2-digit', year: 'numeric',
                   hour: '2-digit', minute: '2-digit',
                 })}
                 {rec.date_label ? ` · ${rec.date_label}` : ''}
-              </div>
+              </p>
             </div>
 
-            <div style={{ display: 'flex', gap: 6 }}>
+            {/* Acciones */}
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
               <button
                 onClick={() => handleDownload(rec)}
-                title="Descargar"
+                disabled={downloadingId === rec.id}
+                title="Descargar PDF"
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  width: 30, height: 30, borderRadius: 6,
-                  background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.2)',
-                  color: '#7ab8ff', cursor: 'pointer',
+                  width: 32, height: 32, borderRadius: 8,
+                  background: 'rgba(79,152,163,0.12)', border: '1px solid rgba(79,152,163,0.25)',
+                  color: '#4f98a3', cursor: downloadingId === rec.id ? 'wait' : 'pointer',
+                  transition: 'all 0.15s ease',
                 }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(79,152,163,0.22)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(79,152,163,0.12)')}
               >
-                <Download size={13} />
+                {downloadingId === rec.id
+                  ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                  : <Download size={14} />
+                }
               </button>
+
               <button
                 onClick={() => handleDelete(rec)}
                 disabled={deletingId === rec.id}
                 title="Eliminar"
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  width: 30, height: 30, borderRadius: 6,
+                  width: 32, height: 32, borderRadius: 8,
                   background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)',
                   color: '#f87171', cursor: deletingId === rec.id ? 'wait' : 'pointer',
+                  transition: 'all 0.15s ease',
                 }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(239,68,68,0.18)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(239,68,68,0.08)')}
               >
-                <Trash2 size={13} />
+                {deletingId === rec.id
+                  ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                  : <Trash2 size={14} />
+                }
               </button>
             </div>
           </div>
         ))}
       </div>
 
-      <style>{`@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   )
 }

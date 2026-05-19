@@ -1,1483 +1,606 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import {
-  Plus, Trash2, MapPin, Calendar, Loader2, FileText, Clock3,
-  Sparkles, X, ChevronRight, LayoutDashboard, FolderOpen,
-  Archive, Settings, AlertTriangle, CheckCircle2, Wind, Sun,
-  Droplets, Thermometer, Crown, Bot, BarChart3, LogOut,
-  TrendingUp, Zap, Shield, Eye, Activity,
-} from 'lucide-react'
+// src/pages/DashboardPage.tsx
+// Weather Studio Dashboard — diseño unificado con HomePage
+// Gestiona fetch Tomorrow.io + análisis Gemini internamente
+// PdfHistoryPanel visible en pestaña Historial · ExportPDFButton conectado
+
+import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import {
+  Plus, FolderOpen, BarChart2, FileText, User,
+  LogOut, ChevronRight, MapPin, Calendar, Trash2,
+  Star, Zap, Building2, RefreshCw, Loader,
+  CloudOff, AlertTriangle,
+} from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
 
-import { supabase } from '../services/supabase'
 import { useAuth } from '../context/AuthContext'
-import { ProfilePanel } from '../components/ProfilePanel'
-import { WeatherMap } from '../components/WeatherMap'
-import { WeatherWidget } from '../components/WeatherWidget'
-import { DateComparator } from '../components/DateComparator'
-import { ShootViabilityScore } from '../components/ShootViabilityScore'
-import { ClimateTimeline } from '../components/ClimateTimeline'
-import { ProjectForecastView }   from '../components/ProjectForecastView'
-import { ProjectInfoPanel }      from '../components/ProjectInfoPanel'
-import { PdfHistoryPanel }       from '../components/PdfHistoryPanel'
-import type { AiAnalysis } from '../components/ProjectForecastView'
+import { getProjects, createProject, deleteProject } from '../api/projects'
+import type { AiAnalysis, ForecastDay, HourlySlot } from '../components/ProjectForecastView'
+import { ProjectForecastView, HourlyForecastView } from '../components/ProjectForecastView'
+import { ExportPDFButton } from '../components/ExportPDFButton'
+import { PdfHistoryPanel } from '../components/PdfHistoryPanel'
 
 
-interface HourlySlot {
-  time: string
-  temp: number
-  feelsLike: number
-  humidity: number
-  precipitation: number
-  windSpeed: number
-  windDir: number
-  cloudCover: number
-  uvIndex: number
-  description: string
-  icon: string
-  riesgo: 'bajo' | 'medio' | 'alto'
-}
+// ── Tipos ─────────────────────────────────────────────────────────────────────
 
-
-
-
-export interface Project {
-  id: number
+interface Project {
+  id: string
   name: string
   location: string
   lat?: number
   lon?: number
-  postalCode?: string
   shoot_date: string
   description?: string
-  aianalysis?: AiAnalysis
-  created_at: string
 }
 
-interface SavedReport {
-  id: string
-  project_id: number
-  project_name: string
-  type: '5dias' | 'horario'
-  date: string
-  location: string
-  created_at: string
-  file_name: string
-  narrative_preview?: string
+type Tab = 'projects' | 'analysis' | 'history' | 'account'
+type AnalysisView = '5dias' | 'dia'
+
+// ── Tokens visuales (idénticos a HomePage) ───────────────────────────────────
+
+const T = {
+  bg: 'linear-gradient(135deg, #050d1a 0%, #0a1628 55%, #0f2236 100%)',
+  surface: 'rgba(255,255,255,0.03)',
+  surfaceHover: 'rgba(255,255,255,0.055)',
+  border: '1px solid rgba(255,255,255,0.08)',
+  borderTeal: '1px solid rgba(79,152,163,0.35)',
+  text: '#f0f6ff',
+  muted: '#94a3b8',
+  faint: '#475569',
+  accent: '#4f98a3',
+  accentBg: 'rgba(79,152,163,0.12)',
+  accentBgHover: 'rgba(79,152,163,0.22)',
+  accentBorder: 'rgba(79,152,163,0.3)',
+  r: 14,
+  rSm: 9,
 }
 
-const TOMORROW_KEY = import.meta.env.VITE_TOMORROW_API_KEY
-const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY
-
-const riskColor = (risk?: string) => {
-  if (risk === 'alto' || risk === 'rojo') return '#ef4444'
-  if (risk === 'medio' || risk === 'amarillo') return '#f59e0b'
-  return '#10b981'
-}
-const riskBg = (risk?: string) => {
-  if (risk === 'alto' || risk === 'rojo') return 'rgba(239,68,68,0.10)'
-  if (risk === 'medio' || risk === 'amarillo') return 'rgba(245,158,11,0.10)'
-  return 'rgba(16,185,129,0.10)'
-}
-const riskLabel = (risk?: string) => {
-  if (risk === 'alto' || risk === 'rojo') return 'Riesgo alto'
-  if (risk === 'medio' || risk === 'amarillo') return 'Precaución'
-  return 'Óptimo'
+const card: React.CSSProperties = {
+  background: T.surface,
+  border: T.border,
+  borderRadius: T.r,
+  backdropFilter: 'blur(14px)',
+  WebkitBackdropFilter: 'blur(14px)',
 }
 
-function formatDate(date: string) {
-  return new Date(`${date}T12:00:00`).toLocaleDateString('es-ES', {
-    day: 'numeric', month: 'long', year: 'numeric',
-  })
-}
-function h2r(hex: string): [number, number, number] {
-  return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)]
-}
-
-async function callGemini(prompt: string, advanced = false): Promise<string> {
-  const model = advanced ? 'gemini-1.5-pro' : 'gemini-1.5-flash'
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) }
-  )
-  const data = await res.json()
-  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+const btnPrimary: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 7,
+  padding: '9px 18px', borderRadius: T.rSm,
+  background: T.accentBg, border: T.borderTeal,
+  color: '#d9fbff', fontSize: 13, fontWeight: 700,
+  cursor: 'pointer', transition: 'all 0.18s ease',
 }
 
-async function loadJsPDF(): Promise<any> {
-  if ((window as any).jspdf) return (window as any).jspdf.jsPDF
-  await new Promise<void>((resolve, reject) => {
-    const script = document.createElement('script')
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
-    script.onload = () => resolve()
-    script.onerror = reject
-    document.head.appendChild(script)
-  })
-  return (window as any).jspdf.jsPDF
+const btnGhost: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 6,
+  padding: '7px 14px', borderRadius: T.rSm,
+  background: 'rgba(255,255,255,0.04)', border: T.border,
+  color: T.muted, fontSize: 13, cursor: 'pointer',
+  transition: 'all 0.18s ease',
 }
 
-async function fetchHourlySlots(project: Project, date: string): Promise<HourlySlot[]> {
-  const loc = project.lat && project.lon ? `${project.lat},${project.lon}` : encodeURIComponent(project.location)
-  const url = `https://api.tomorrow.io/v4/timelines?location=${loc}&apikey=${TOMORROW_KEY}` +
-    `&timesteps=1h&units=metric&startTime=${date}T00:00:00Z&endTime=${date}T23:59:59Z` +
-    `&fields=temperature,temperatureApparent,humidity,precipitationProbability,windSpeed,windDirection,cloudCover,uvIndex,weatherCodeMax`
+const inputStyle: React.CSSProperties = {
+  width: '100%', padding: '10px 14px', borderRadius: T.rSm,
+  background: 'rgba(255,255,255,0.04)', border: T.border,
+  color: T.text, fontSize: 14, outline: 'none',
+  transition: 'border-color 0.18s ease',
+}
+
+const labelStyle: React.CSSProperties = {
+  display: 'block', color: T.muted, fontSize: 12,
+  fontWeight: 600, marginBottom: 6,
+  textTransform: 'uppercase', letterSpacing: '0.06em',
+}
+
+// ── Plan config ───────────────────────────────────────────────────────────────
+
+const PLANS: Record<string, { label: string; color: string; bg: string; border: string; icon: React.ReactNode; limit: number | 'unlimited'; canHourly: boolean }> = {
+  free:         { label: 'Free',          color: '#94a3b8', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.2)', icon: <Star size={11}/>,     limit: 1,           canHourly: false },
+  basic:        { label: 'Básico',        color: '#4f98a3', bg: T.accentBg,              border: T.accentBorder,           icon: <Star size={11}/>,     limit: 3,           canHourly: false },
+  freelance_pro:{ label: 'Freelance Pro', color: '#06b6d4', bg: 'rgba(6,182,212,0.12)', border: 'rgba(6,182,212,0.25)',   icon: <Zap size={11}/>,      limit: 10,          canHourly: true  },
+  studio:       { label: 'Studio',        color: '#a78bfa', bg: 'rgba(167,139,250,0.12)',border: 'rgba(167,139,250,0.25)', icon: <Building2 size={11}/>,limit: 'unlimited', canHourly: true  },
+}
+
+// ── Fetch Tomorrow.io 5 días ──────────────────────────────────────────────────
+
+async function fetchFiveDayForecast(project: Project): Promise<ForecastDay[]> {
+  const KEY = import.meta.env.VITE_TOMORROW_API_KEY
+  if (!KEY) throw new Error('VITE_TOMORROW_API_KEY no configurada')
+  const loc = project.lat && project.lon
+    ? `${project.lat},${project.lon}`
+    : encodeURIComponent(project.location)
+  const url = `https://api.tomorrow.io/v4/timelines?location=${loc}&apikey=${KEY}&timesteps=1d&units=metric&fields=temperatureMax,temperatureMin,precipitationAccumulation,windSpeedAvg,uvIndexMax,cloudCoverAvg,weatherCodeMax&startTime=${project.shoot_date}T00:00:00Z&endTime=${addDays(project.shoot_date, 4)}T23:59:59Z`
   const res = await fetch(url)
+  if (!res.ok) throw new Error(`Tomorrow.io ${res.status}`)
   const data = await res.json()
   const intervals = data.data?.timelines?.[0]?.intervals ?? []
   const iconMap: Record<number,string> = { 1000:'☀️',1001:'☁️',1100:'🌤️',1101:'⛅',1102:'🌥️',2000:'🌫️',4000:'🌦️',4001:'🌧️',4200:'🌦️',4201:'🌧️',5000:'❄️',6000:'🌨️',8000:'⛈️' }
   const descMap: Record<number,string> = { 1000:'Despejado',1001:'Nublado',1100:'Mayormente despejado',1101:'Parcialmente nublado',1102:'Mayormente nublado',2000:'Niebla',4000:'Llovizna',4001:'Lluvia',4200:'Lluvia ligera',4201:'Lluvia intensa',5000:'Nieve',6000:'Lluvia helada',8000:'Tormenta' }
+  const days = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']
   return intervals.map((iv: any) => {
     const v = iv.values
-    const hour = new Date(iv.startTime).toLocaleTimeString('es-ES', { hour:'2-digit', minute:'2-digit', timeZone:'Europe/Madrid' })
-    const riesgo: 'bajo'|'medio'|'alto' = v.precipitationProbability > 70 || v.windSpeed*3.6 > 60 ? 'alto' : v.precipitationProbability > 40 || v.windSpeed*3.6 > 35 ? 'medio' : 'bajo'
-    return { time: hour, temp: Math.round(v.temperature), feelsLike: Math.round(v.temperatureApparent), humidity: Math.round(v.humidity), precipitation: Math.round(v.precipitationProbability), windSpeed: Math.round(v.windSpeed*3.6), windDir: Math.round(v.windDirection), cloudCover: Math.round(v.cloudCover), uvIndex: Math.round(v.uvIndex), description: descMap[v.weatherCodeMax] ?? 'Variable', icon: iconMap[v.weatherCodeMax] ?? '🌡️', riesgo }
+    const d = new Date(iv.startTime)
+    const riesgo: 'bajo'|'medio'|'alto' = v.precipitationAccumulation > 10 || v.windSpeedAvg > 60 ? 'alto' : v.precipitationAccumulation > 3 || v.windSpeedAvg > 35 ? 'medio' : 'bajo'
+    return {
+      date: d.toLocaleDateString('es-ES', { day:'2-digit', month:'2-digit' }),
+      label: days[d.getDay()],
+      tempMax: Math.round(v.temperatureMax),
+      tempMin: Math.round(v.temperatureMin),
+      precipitation: Math.round(v.precipitationAccumulation * 10) / 10,
+      windSpeed: Math.round(v.windSpeedAvg * 3.6),
+      uvIndex: Math.round(v.uvIndexMax),
+      cloudCover: Math.round(v.cloudCoverAvg),
+      description: descMap[v.weatherCodeMax] ?? 'Variable',
+      icon: iconMap[v.weatherCodeMax] ?? '🌡️',
+      riesgo,
+      recomendacion: riesgo === 'alto' ? 'Condiciones adversas. Valorar posponer el rodaje y proteger el equipo.' : riesgo === 'medio' ? 'Condiciones aceptables con precaución. Llevar protección para cámaras y objetivos.' : 'Condiciones óptimas para rodar. Aprovechar la luz natural disponible.',
+    }
   })
 }
 
-async function generatePDF5Days(project: Project, ai: AiAnalysis) {
-  const JsPDF = await loadJsPDF()
-  const doc = new JsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-  const W = 210, M = 16, colW = W - M * 2
-  let y = 18
+function addDays(dateStr: string, n: number): string {
+  const d = new Date(dateStr + 'T12:00:00')
+  d.setDate(d.getDate() + n)
+  return d.toISOString().slice(0, 10)
+}
 
-  const sf = (h: string) => { try { doc.setFillColor(...h2r(h)) } catch {} }
-  const sd = (h: string) => { try { doc.setDrawColor(...h2r(h)) } catch {} }
-  const st = (h: string) => { try { doc.setTextColor(...h2r(h)) } catch {} }
-  const safeText = (t: string) => String(t ?? '').replace(/[^\x00-\x7F]/g, c => c)
-  const checkPage = (n = 20) => {
-    if (y + n > 280) {
-      doc.addPage(); y = 16
-      sf('#ffffff'); doc.rect(0, 0, W, 297, 'F')
-    }
+// ── Análisis IA con Gemini ────────────────────────────────────────────────────
+
+async function analyzeWithGemini(forecast: ForecastDay[], project: Project): Promise<AiAnalysis> {
+  const KEY = import.meta.env.VITE_GEMINI_API_KEY
+  const daysText = forecast.map(d =>
+    `${d.label} ${d.date}: ${d.description}, Tmax=${d.tempMax}°C Tmin=${d.tempMin}°C, lluvia=${d.precipitation}mm, viento=${d.windSpeed}km/h, UV=${d.uvIndex}, nubes=${d.cloudCover}%, riesgo=${d.riesgo}`
+  ).join('\n')
+
+  const fallback: AiAnalysis = {
+    resumen: `Análisis meteorológico para ${project.name} en ${project.location}. Período de 5 días a partir del ${project.shoot_date}. Revisa los datos día a día para planificar el rodaje.`,
+    mejor_dia: forecast.reduce((best, d) => d.riesgo === 'bajo' ? (best.riesgo !== 'bajo' ? d : best) : best, forecast[0])?.label + ' ' + forecast.reduce((best, d) => d.riesgo === 'bajo' ? (best.riesgo !== 'bajo' ? d : best) : best, forecast[0])?.date,
+    equipamiento: ['Protector de lluvia para cámara', 'Parasol y filtro ND', 'Monitor de campo', 'Batería de repuesto', 'Bolsas estancas para equipo'],
+    consejo_general: 'Monitoriza el parte meteorológico local 24h antes del rodaje. Ten siempre un plan B para interiores en caso de lluvia.',
+    forecast,
   }
 
-  // ── Portada ──
-  sf('#07121f'); doc.rect(0, 0, W, 297, 'F')
-  st('#60a5fa'); doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
-  doc.text('WEATHER STUDIO', M, 22)
-  st('#f8fafc'); doc.setFontSize(22)
-  doc.text(doc.splitTextToSize(safeText(project.name), colW), M, 48)
-  st('#cbd5e1'); doc.setFontSize(10)
-  doc.text(`Ubicacion: ${safeText(project.location)}`, M, 70)
-  doc.text(`Fecha de rodaje: ${safeText(project.shoot_date)}`, M, 78)
-  doc.text(`Mejor dia: ${safeText(ai?.mejor_dia || '-')}`, M, 86)
-  doc.text(`Generado: ${new Date().toLocaleDateString('es-ES')}`, M, 94)
+  if (!KEY) return fallback
 
-  // ── Página resumen IA ──
-  doc.addPage(); y = 18
-  sf('#ffffff'); doc.rect(0, 0, W, 297, 'F')
-
-  const resumen = ai?.resumen ?? ''
-  if (resumen) {
-    const lines = doc.splitTextToSize(safeText(resumen), colW - 12)
-    const blockH = lines.length * 5 + 14
-    sf('#eff6ff'); sd('#60a5fa')
-    doc.roundedRect(M, y, colW, blockH, 3, 3, 'FD')
-    st('#2563eb'); doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
-    doc.text('ANALISIS IA', M + 6, y + 6)
-    st('#1e293b'); doc.setFont('helvetica', 'normal'); doc.setFontSize(10)
-    doc.text(lines, M + 6, y + 12)
-    y += blockH + 10
-  }
-
-  // ── Días del forecast ──
-  const forecast = Array.isArray(ai?.forecast) ? ai.forecast : []
-  if (forecast.length === 0) {
-    checkPage(30)
-    st('#64748b'); doc.setFont('helvetica', 'italic'); doc.setFontSize(10)
-    doc.text('No hay datos de forecast disponibles para este proyecto.', M, y + 10)
-    y += 20
-  }
-
-  forecast.forEach((day: any) => {
-    checkPage(38)
-    const color = riskColor(day?.riesgo)
-    const bg = day?.riesgo === 'alto' ? '#fef2f2' : day?.riesgo === 'medio' ? '#fffbeb' : '#f0fdf4'
-    sf(bg); sd(color)
-    doc.roundedRect(M, y, colW, 30, 3, 3, 'FD')
-    st('#0f172a'); doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
-    const dayTitle = safeText(`${day?.label ?? ''} - ${day?.date ?? ''}`)
-    doc.text(dayTitle, M + 6, y + 8)
-    st(color); doc.setFontSize(8)
-    doc.text(safeText((day?.riesgo ?? '').toUpperCase()), W - M - 20, y + 8)
-    st('#475569'); doc.setFont('helvetica', 'normal'); doc.setFontSize(8)
-    const statsLine = `Tmax: ${day?.tempMax ?? '-'}C  Tmin: ${day?.tempMin ?? '-'}C  Lluvia: ${day?.precipitation ?? '-'}mm  Viento: ${day?.windSpeed ?? '-'}km/h  UV: ${day?.uvIndex ?? '-'}`
-    doc.text(safeText(statsLine), M + 6, y + 16)
-    const rec = doc.splitTextToSize(safeText(day?.recomendacion ?? ''), colW - 12)
-    st('#1e293b')
-    doc.text(rec.slice(0, 1), M + 6, y + 23)
-    y += 38
-  })
-
-  // ── Pie de página ──
-  const total = doc.getNumberOfPages()
-  for (let i = 1; i <= total; i++) {
-    doc.setPage(i)
-    sf('#f1f5f9'); doc.rect(0, 285, W, 12, 'F')
-    st('#94a3b8'); doc.setFontSize(7)
-    doc.text('WEATHER STUDIO - Informe meteorologico', M, 291)
-    doc.text(`Pag. ${i} de ${total}`, W - M - 10, 291)
-  }
-
-  const fileName = `ws-forecast-${project.name.toLowerCase().replace(/\s+/g, '-')}-${project.shoot_date}.pdf`
-  doc.save(fileName)
-  return fileName
+  const prompt = `Eres meteorólogo profesional especializado en producción audiovisual.
+Analiza este forecast de 5 días para el rodaje "${project.name}" en ${project.location} y responde SOLO con un JSON válido (sin markdown):
+{
+  "resumen": "párrafo de 2-3 frases sobre las condiciones generales del período",
+  "mejor_dia": "nombre del mejor día para rodar con su fecha",
+  "equipamiento": ["item1", "item2", "item3", "item4", "item5"],
+  "consejo_general": "consejo práctico de 1-2 frases para el equipo de rodaje",
+  "forecast": <devuelve el mismo array forecast sin modificar>
 }
 
-async function generatePDFHourly(project: Project, date: string, hours: HourlySlot[], advanced: boolean) {
-  const JsPDF = await loadJsPDF()
-  const dateLabel = new Date(`${date}T12:00:00`).toLocaleDateString('es-ES', { weekday:'long',day:'numeric',month:'long',year:'numeric' })
-  const hoursText = hours.map(h => `${h.time}: ${h.description}, temp=${h.temp}°C, viento=${h.windSpeed}km/h, lluvia=${h.precipitation}%, UV=${h.uvIndex}, riesgo=${h.riesgo}`).join('\n')
-  const prompt = `Eres un meteorólogo profesional para producción audiovisual. Redacta un parte horario del ${dateLabel} en ${project.location}. Para cada hora escribe una frase breve, clara y útil para rodaje. Responde SOLO con un array JSON de strings. Datos:\n${hoursText}`
-  const raw = await callGemini(prompt, advanced)
-  const cleaned = raw.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim()
-  let narrative: string[] = []
-  try { narrative = JSON.parse(cleaned) } catch { narrative = hours.map(h => `${h.time}: ${h.description}. Temp ${h.temp}°C, viento ${h.windSpeed}km/h y precipitación ${h.precipitation}%.`) }
-  const doc = new JsPDF({ orientation:'portrait', unit:'mm', format:'a4' })
-  const W = 210, M = 14, colW = W - M * 2
-  let y = 18
-  const sf = (h: string) => doc.setFillColor(...h2r(h))
-  const sd = (h: string) => doc.setDrawColor(...h2r(h))
-  const st = (h: string) => doc.setTextColor(...h2r(h))
-  const checkPage = (n = 20) => { if (y + n > 280) { doc.addPage(); y = 16; sf('#ffffff'); doc.rect(0,0,W,297,'F') } }
-  sf('#07121f'); doc.rect(0,0,W,297,'F'); st('#67e8f9'); doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text('WEATHER STUDIO',M,22); st('#f8fafc'); doc.setFontSize(23); doc.text(doc.splitTextToSize(project.name,colW),M,48); st('#cbd5e1'); doc.setFontSize(10); doc.text(`Parte horario — ${dateLabel}`,M,68); doc.text(`Ubicación: ${project.location}`,M,76); doc.text(`Análisis: ${advanced?'Gemini Pro':'Gemini Flash'}`,M,84)
-  doc.addPage(); y = 18; sf('#ffffff'); doc.rect(0,0,W,297,'F')
-  narrative.forEach((text, index) => { const h = hours[index]; const c = riskColor(h?.riesgo); const lines = doc.splitTextToSize(text,colW-16); const blockH = lines.length*5+12; checkPage(blockH+6); sf(index%2===0?'#f8fafc':'#ffffff'); sd(h?.riesgo&&h.riesgo!=='bajo'?c:'#e2e8f0'); doc.roundedRect(M,y,colW,blockH,2,2,'FD'); if(h){sf(c);doc.rect(M,y,3,blockH,'F')} st('#1e293b'); doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.text(lines,M+7,y+6); y+=blockH+4 })
-  const total = doc.getNumberOfPages()
-  for (let i = 1; i <= total; i++) { doc.setPage(i); sf('#f1f5f9'); doc.rect(0,285,W,12,'F'); st('#94a3b8'); doc.setFontSize(7); doc.text(`WEATHER STUDIO · Parte horario ${date}`,M,291); doc.text(`Pág. ${i} de ${total}`,W-M-10,291) }
-  const fileName = `ws-parte-${project.name.toLowerCase().replace(/\s+/g,'-')}-${date}.pdf`
-  doc.save(fileName); return fileName
-}
+Datos forecast:
+${daysText}`
 
-// ─── Design Tokens (alineados con HomePage) ───────────────────────────────────
-const C = {
-  bg: '#07111f',
-  bgDeep: '#040a12',
-  surface: 'rgba(255,255,255,0.04)',
-  surfaceHover: 'rgba(255,255,255,0.07)',
-  border: 'rgba(255,255,255,0.08)',
-  borderStrong: 'rgba(255,255,255,0.14)',
-  text: '#ffffff',
-  textMuted: '#94a3b8',
-  textSubtle: '#475569',
-  blue: '#3b82f6',
-  blueDim: 'rgba(59,130,246,0.12)',
-  cyan: '#22d3ee',
-  cyanDim: 'rgba(34,211,238,0.10)',
-  green: '#10b981',
-  greenDim: 'rgba(16,185,129,0.10)',
-  amber: '#f59e0b',
-  amberDim: 'rgba(245,158,11,0.10)',
-  red: '#ef4444',
-  redDim: 'rgba(239,68,68,0.08)',
-  violet: '#8b5cf6',
-  violetDim: 'rgba(139,92,246,0.10)',
-}
-
-// ─── Ambient Background Orbs (alineados con HomePage) ────────────────────────
-function AmbientOrbs() {
-  return (
-    <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 0, overflow: 'hidden' }}>
-      <div style={{ position: 'absolute', top: '8%', left: '12%', width: 700, height: 700, borderRadius: '50%', background: 'radial-gradient(circle, rgba(34,211,238,0.05) 0%, transparent 65%)', filter: 'blur(50px)' }} />
-      <div style={{ position: 'absolute', bottom: '15%', right: '8%', width: 600, height: 600, borderRadius: '50%', background: 'radial-gradient(circle, rgba(59,130,246,0.06) 0%, transparent 65%)', filter: 'blur(50px)' }} />
-      <div style={{ position: 'absolute', top: '45%', left: '45%', transform: 'translate(-50%,-50%)', width: 900, height: 500, borderRadius: '50%', background: 'radial-gradient(ellipse, rgba(139,92,246,0.025) 0%, transparent 70%)', filter: 'blur(70px)' }} />
-    </div>
-  )
-}
-
-// ─── Scan Line Texture ────────────────────────────────────────────────────────
-function ScanLines() {
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 1,
-      backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px)',
-      opacity: 0.4,
-    }} />
-  )
-}
-
-// ─── KPI Card ─────────────────────────────────────────────────────────────────
-function KpiCard({ icon, label, value, sub, color, onClick }: {
-  icon: React.ReactNode; label: string; value: string | number; sub?: string; color: string; onClick?: () => void
-}) {
-  const [hovered, setHovered] = useState(false)
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      whileHover={{ y: -3, transition: { duration: 0.15 } }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onClick={onClick}
-      style={{
-        position: 'relative', overflow: 'hidden',
-        minHeight: 130, padding: '20px 20px 18px',
-        borderRadius: 20,
-        background: hovered
-          ? `linear-gradient(135deg, ${color}10, rgba(255,255,255,0.04))`
-          : 'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02))',
-        border: hovered ? `1px solid ${color}30` : `1px solid ${C.border}`,
-        cursor: onClick ? 'pointer' : 'default',
-        transition: 'all 0.2s ease',
-        boxShadow: hovered ? `0 8px 32px ${color}18` : 'none',
-      }}
-    >
-      {/* Accent line top */}
-      <div style={{ position: 'absolute', top: 0, left: 20, right: 20, height: 1, background: `linear-gradient(90deg, transparent, ${color}50, transparent)`, opacity: hovered ? 1 : 0, transition: 'opacity 0.2s' }} />
-
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
-        <div style={{
-          width: 42, height: 42, borderRadius: 12,
-          background: `${color}14`,
-          border: `1px solid ${color}22`,
-          display: 'grid', placeItems: 'center', color,
-        }}>
-          {icon}
-        </div>
-        <div style={{ fontSize: 10, fontWeight: 800, color: C.textSubtle, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-          {label}
-        </div>
-      </div>
-
-      <div style={{ fontSize: 26, color: C.text, fontWeight: 900, letterSpacing: '-0.02em', lineHeight: 1, marginBottom: 6 }}>
-        {value}
-      </div>
-      {sub && <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.4 }}>{sub}</div>}
-
-      {/* Corner glow */}
-      <div style={{ position: 'absolute', bottom: -20, right: -20, width: 80, height: 80, borderRadius: '50%', background: `radial-gradient(circle, ${color}15, transparent 70%)` }} />
-    </motion.div>
-  )
-}
-
-// ─── Section Shell ────────────────────────────────────────────────────────────
-function Shell({ title, badge, badgeColor, children, action }: {
-  title: string; badge?: string; badgeColor?: string; children: React.ReactNode; action?: React.ReactNode
-}) {
-  return (
-    <div style={{
-      position: 'relative', overflow: 'hidden',
-      background: 'rgba(255,255,255,0.035)',
-      border: '1px solid rgba(255,255,255,0.08)',
-      borderRadius: 24, padding: 24,
-      backdropFilter: 'blur(20px)',
-      WebkitBackdropFilter: 'blur(20px)',
-    }}>
-      {/* Top gradient accent — igual que HomePage cards */}
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(90deg, transparent, rgba(34,211,238,0.3), transparent)' }} />
-
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <h2 style={{ fontSize: 15, fontWeight: 700, color: '#ffffff', margin: 0, letterSpacing: '-0.01em', fontFamily: "'Sora', system-ui, sans-serif" }}>{title}</h2>
-          {badge && (
-            <span style={{
-              fontSize: 9, fontWeight: 800, padding: '3px 8px', borderRadius: 6,
-              background: badgeColor ? `${badgeColor}18` : 'rgba(34,211,238,0.1)',
-              border: `1px solid ${badgeColor ? `${badgeColor}30` : 'rgba(34,211,238,0.2)'}`,
-              color: badgeColor || '#22d3ee',
-              letterSpacing: '0.08em', textTransform: 'uppercase',
-            }}>
-              {badge}
-            </span>
-          )}
-        </div>
-        {action}
-      </div>
-      <div>{children}</div>
-    </div>
-  )
-}
-
-// ─── Stat Pill ────────────────────────────────────────────────────────────────
-function Pill({ color, children }: { color: string; children: React.ReactNode }) {
-  return (
-    <span style={{
-      fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 8,
-      background: `${color}12`, border: `1px solid ${color}22`, color,
-    }}>
-      {children}
-    </span>
-  )
-}
-
-// ─── Risk Badge ───────────────────────────────────────────────────────────────
-function RiskBadge({ risk }: { risk?: string }) {
-  const color = riskColor(risk)
-  const label = riskLabel(risk)
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 5,
-      fontSize: 10, fontWeight: 800, padding: '3px 9px', borderRadius: 6,
-      background: riskBg(risk), color,
-      border: `1px solid ${color}28`,
-      letterSpacing: '0.04em',
-    }}>
-      <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}` }} />
-      {label}
-    </span>
-  )
-}
-
-// ─── Project Header Card ──────────────────────────────────────────────────────
-function ProjectHeaderCard({ project, open, onToggle, onDelete }: {
-  project: Project; open: boolean; onToggle: () => void; onDelete: () => void
-}) {
-  const firstDay = project.aianalysis?.forecast?.[0]
-  const [hovered, setHovered] = useState(false)
-
-  return (
-    <motion.div
-      layout
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        borderRadius: open ? '20px 20px 0 0' : 20,
-        background: open
-          ? 'rgba(59,130,246,0.07)'
-          : hovered ? 'rgba(255,255,255,0.045)' : 'rgba(255,255,255,0.028)',
-        border: open
-          ? `1px solid rgba(59,130,246,0.25)`
-          : `1px solid ${hovered ? C.borderStrong : C.border}`,
-        transition: 'all 0.18s ease',
-        overflow: 'hidden',
-      }}
-    >
-      <div
-        onClick={onToggle}
-        style={{
-          padding: '18px 22px',
-          display: 'grid',
-          gridTemplateColumns: '8px minmax(0,1fr) auto auto',
-          gap: 18, alignItems: 'center', cursor: 'pointer',
-        }}
-      >
-        {/* Status dot */}
-        <div style={{
-          width: 8, height: 8, borderRadius: '50%',
-          background: riskColor(firstDay?.riesgo),
-          boxShadow: `0 0 12px ${riskColor(firstDay?.riesgo)}80`,
-        }} />
-
-        <div style={{ minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 16, fontWeight: 800, color: C.text, lineHeight: 1.2 }}>{project.name}</span>
-            <RiskBadge risk={firstDay?.riesgo} />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', fontSize: 12, color: C.textMuted }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <MapPin size={11} /> {project.location}
-            </span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <Calendar size={11} /> {formatDate(project.shoot_date)}
-            </span>
-          </div>
-          {project.description && (
-            <p style={{ margin: '6px 0 0', fontSize: 12, color: C.textSubtle, lineHeight: 1.5 }}>
-              {project.description}
-            </p>
-          )}
-        </div>
-
-        {/* Weather pills */}
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {firstDay ? (
-            <>
-              <Pill color="#fb923c">🌡 {firstDay.tempMax}°</Pill>
-              <Pill color="#c084fc">💨 {firstDay.windSpeed}km/h</Pill>
-              <Pill color="#38bdf8">💧 {firstDay.precipitation}mm</Pill>
-            </>
-          ) : <Pill color={C.textSubtle}>Sin análisis</Pill>}
-        </div>
-
-        {/* Actions */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={e => e.stopPropagation()}>
-          <button
-            onClick={onDelete}
-            style={{
-              width: 34, height: 34, borderRadius: 10, display: 'grid', placeItems: 'center',
-              background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.14)',
-              color: '#ef4444', cursor: 'pointer', transition: 'all 0.15s',
-            }}
-            onMouseEnter={e => { (e.currentTarget as any).style.background = 'rgba(239,68,68,0.14)' }}
-            onMouseLeave={e => { (e.currentTarget as any).style.background = 'rgba(239,68,68,0.07)' }}
-          >
-            <Trash2 size={13} />
-          </button>
-          <div style={{
-            width: 32, height: 32, display: 'grid', placeItems: 'center', color: C.textMuted,
-            transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease',
-          }}>
-            <ChevronRight size={16} />
-          </div>
-        </div>
-      </div>
-    </motion.div>
-  )
-}
-
-// ─── Reports Section ──────────────────────────────────────────────────────────
-function ReportsSection({ userId }: { userId: string }) {
-  const [reports, setReports] = useState<SavedReport[]>([])
-  const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'todos' | '5dias' | 'horario'>('todos')
-
-  useEffect(() => {
-    async function loadReports() {
-      setLoading(true)
-      const { data } = await supabase.from('reports').select('*').order('created_at', { ascending: false }).limit(50)
-      setReports((data as SavedReport[]) || [])
-      setLoading(false)
-    }
-    loadReports()
-  }, [userId])
-
-  const filtered = filter === 'todos' ? reports : reports.filter(r => r.type === filter)
-
-  async function deleteReport(id: string) {
-    if (!confirm('¿Eliminar este reporte del historial?')) return
-    await supabase.from('reports').delete().eq('id', id)
-    setReports(prev => prev.filter(r => r.id !== id))
-  }
-
-  return (
-    <Shell title="Historial de reportes" badge={`${reports.length} PDFs`}>
-      {/* Filter tabs */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 20 }}>
-        {(['todos', '5dias', 'horario'] as const).map(item => (
-          <button key={item} onClick={() => setFilter(item)} style={{
-            padding: '7px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
-            border: filter === item ? `1px solid rgba(59,130,246,0.35)` : `1px solid ${C.border}`,
-            background: filter === item ? C.blueDim : C.surface,
-            color: filter === item ? '#93c5fd' : C.textMuted,
-            transition: 'all 0.15s',
-          }}>
-            {item === 'todos' ? 'Todos' : item === '5dias' ? 'Forecast 5 días' : 'Parte horario'}
-          </button>
-        ))}
-      </div>
-
-      {loading ? (
-        <div style={{ display: 'grid', placeItems: 'center', minHeight: 180, color: C.textSubtle }}>
-          <Loader2 size={20} style={{ animation: 'spin .8s linear infinite' }} />
-        </div>
-      ) : filtered.length === 0 ? (
-        <div style={{ display: 'grid', placeItems: 'center', minHeight: 200, textAlign: 'center' }}>
-          <div>
-            <div style={{ width: 56, height: 56, borderRadius: 16, background: C.blueDim, border: `1px solid rgba(59,130,246,0.2)`, display: 'grid', placeItems: 'center', margin: '0 auto 16px', color: '#60a5fa' }}>
-              <Archive size={22} />
-            </div>
-            <div style={{ fontWeight: 800, color: C.text, marginBottom: 8, fontSize: 16 }}>Sin reportes todavía</div>
-            <p style={{ margin: 0, color: C.textMuted, fontSize: 13, lineHeight: 1.6 }}>Los PDFs que generes aparecerán aquí.</p>
-          </div>
-        </div>
-      ) : (
-        <div style={{ display: 'grid', gap: 8 }}>
-          {filtered.map((report, i) => (
-            <motion.div
-              key={report.id}
-              initial={{ opacity: 0, x: -12 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: i * 0.04 }}
-              style={{
-                padding: '14px 18px', borderRadius: 14,
-                border: `1px solid ${C.border}`, background: C.surface,
-                display: 'grid', gridTemplateColumns: '40px minmax(0,1fr) auto',
-                gap: 14, alignItems: 'center',
-              }}
-            >
-              <div style={{
-                width: 40, height: 40, borderRadius: 11, display: 'grid', placeItems: 'center',
-                color: report.type === 'horario' ? C.cyan : '#60a5fa',
-                background: report.type === 'horario' ? C.cyanDim : C.blueDim,
-                border: `1px solid ${C.border}`,
-              }}>
-                {report.type === 'horario' ? <Clock3 size={16} /> : <FileText size={16} />}
-              </div>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
-                  <span style={{ fontWeight: 800, color: C.text, fontSize: 13 }}>{report.project_name}</span>
-                  <span style={{
-                    fontSize: 9, fontWeight: 900, padding: '2px 7px', borderRadius: 5,
-                    background: report.type === 'horario' ? C.cyanDim : C.blueDim,
-                    color: report.type === 'horario' ? C.cyan : '#93c5fd',
-                    letterSpacing: '0.06em', textTransform: 'uppercase',
-                  }}>
-                    {report.type === 'horario' ? 'PARTE HORARIO' : '5 DÍAS'}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', color: C.textMuted, fontSize: 11 }}>
-                  <span>{report.location}</span>
-                  <span>·</span>
-                  <span>{formatDate(report.date)}</span>
-                  <span>·</span>
-                  <span>{new Date(report.created_at).toLocaleString('es-ES')}</span>
-                </div>
-              </div>
-              <button onClick={() => deleteReport(report.id)} style={{
-                width: 32, height: 32, borderRadius: 9, border: `1px solid rgba(239,68,68,0.16)`,
-                background: C.redDim, color: C.red, cursor: 'pointer', display: 'grid', placeItems: 'center',
-              }}>
-                <Trash2 size={13} />
-              </button>
-            </motion.div>
-          ))}
-        </div>
-      )}
-    </Shell>
-  )
-}
-
-// ─── Config Section ───────────────────────────────────────────────────────────
-function ConfigSection() {
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 860px)', justifyContent: 'center' }}>
-      <Shell title="Configuración de cuenta">
-        <ProfilePanel />
-      </Shell>
-    </div>
-  )
-}
-
-// ─── Create Modal ─────────────────────────────────────────────────────────────
-function CreateModal({ onClose, onCreated, token, isAdvanced }: {
-  onClose: () => void; onCreated: (p: Project) => void; token: string; isAdvanced: boolean
-}) {
-  const [form, setForm] = useState({ name: '', location: '', shoot_date: '', description: '' })
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!form.name || !form.location || !form.shoot_date) { setError('Nombre, ubicación y fecha son obligatorios'); return }
-    setLoading(true); setError('')
-    try {
-      const res = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ...form, advancedAI: isAdvanced }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Error al crear el proyecto')
-      onCreated(data.project)
-    } catch (err: any) {
-      setError(err.message)
-    } finally { setLoading(false) }
-  }
-
-  const inputStyle: React.CSSProperties = {
-    width: '100%', height: 48, padding: '0 16px',
-    background: 'rgba(255,255,255,0.04)',
-    border: `1px solid ${C.border}`,
-    borderRadius: 12, color: C.text, fontSize: 14, outline: 'none',
-    transition: 'border-color 0.15s',
-  }
-
-  return (
-    <div
-      style={{
-        position: 'fixed', inset: 0, zIndex: 300,
-        background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(12px)',
-        display: 'grid', placeItems: 'center', padding: 24,
-      }}
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}
-    >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 16 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        style={{
-          width: '100%', maxWidth: 560, borderRadius: 26,
-          border: `1px solid ${C.borderStrong}`,
-          background: '#0a1220',
-          padding: 32, boxShadow: '0 32px 80px rgba(0,0,0,0.5)',
-          position: 'relative', overflow: 'hidden',
-        }}
-      >
-        {/* Top accent */}
-        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(90deg, transparent, rgba(59,130,246,0.6), transparent)' }} />
-
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 24 }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, background: C.blueDim, border: `1px solid rgba(59,130,246,0.25)`, display: 'grid', placeItems: 'center', color: C.blue }}>
-                <Sparkles size={16} />
-              </div>
-              <div style={{ fontSize: 20, fontWeight: 900, color: C.text, letterSpacing: '-0.02em' }}>Nuevo proyecto</div>
-            </div>
-            <div style={{ fontSize: 12, color: C.textMuted, paddingLeft: 46 }}>
-              {isAdvanced ? '⚡ Gemini Pro · Análisis avanzado activado' : '✦ Gemini Flash · Análisis estándar'}
-            </div>
-          </div>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: C.textMuted, cursor: 'pointer', padding: 4 }}>
-            <X size={18} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 14 }}>
-          {[
-            { key: 'name', label: 'Nombre del proyecto', placeholder: 'Ej: Nike Campaign Valencia', type: 'text' },
-            { key: 'location', label: 'Ubicación del rodaje', placeholder: 'Ej: Valencia, España', type: 'text' },
-            { key: 'shoot_date', label: 'Fecha principal de rodaje', placeholder: '', type: 'date' },
-          ].map(({ key, label, placeholder, type }) => (
-            <div key={key} style={{ display: 'grid', gap: 7 }}>
-              <label style={{ fontSize: 11, color: C.textMuted, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</label>
-              <input
-                type={type}
-                style={{ ...inputStyle, colorScheme: type === 'date' ? 'dark' : undefined }}
-                value={(form as any)[key]}
-                placeholder={placeholder}
-                onChange={e => setForm(p => ({ ...p, [key]: e.target.value }))}
-                onFocus={e => (e.target.style.borderColor = 'rgba(59,130,246,0.5)')}
-                onBlur={e => (e.target.style.borderColor = C.border)}
-              />
-            </div>
-          ))}
-
-          <div style={{ display: 'grid', gap: 7 }}>
-            <label style={{ fontSize: 11, color: C.textMuted, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Descripción del proyecto</label>
-            <textarea
-              rows={3}
-              style={{ ...inputStyle, padding: 14, height: 'auto', resize: 'vertical' }}
-              value={form.description}
-              placeholder="Tipo de producción, escenas exteriores previstas, equipo..."
-              onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
-              onFocus={e => (e.target.style.borderColor = 'rgba(59,130,246,0.5)')}
-              onBlur={e => (e.target.style.borderColor = C.border)}
-            />
-          </div>
-
-          {/* Fecha histórica warning */}
-          {form.shoot_date && new Date(form.shoot_date) < new Date() && (
-            <div style={{ display: 'flex', gap: 8, padding: '10px 14px', borderRadius: 10, background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.2)', fontSize: 12, color: '#fbbf24' }}>
-              <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-              <span>Fecha pasada. El análisis usará el forecast de los <strong>próximos 5 días</strong> desde hoy.</span>
-            </div>
-          )}
-
-          {error && (
-            <div style={{ fontSize: 12, color: '#fca5a5', padding: '10px 14px', borderRadius: 10, background: C.redDim, border: '1px solid rgba(239,68,68,0.16)' }}>
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit" disabled={loading}
-            style={{
-              height: 50, borderRadius: 13, border: 'none',
-              background: loading ? 'rgba(59,130,246,0.5)' : 'linear-gradient(135deg, #3b82f6, #2563eb)',
-              color: '#fff', fontSize: 14, fontWeight: 800,
-              cursor: loading ? 'wait' : 'pointer',
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              boxShadow: '0 4px 20px rgba(59,130,246,0.3)',
-              transition: 'all 0.15s',
-            }}
-          >
-            {loading ? <Loader2 size={16} style={{ animation: 'spin .8s linear infinite' }} /> : <Sparkles size={15} />}
-            {loading ? 'Analizando con IA...' : 'Analizar con IA'}
-          </button>
-        </form>
-      </motion.div>
-    </div>
-  )
-}
-
-// ─── Project Panel ────────────────────────────────────────────────────────────
-function ProjectPanel({ project, canExportPDF, canExportDayPDF, isAdvanced }: {
-  project: Project; canExportPDF: boolean; canExportDayPDF: boolean; isAdvanced: boolean
-}) {
-  const [forecastMode, setForecastMode] = useState<'5dias' | 'dia'>('5dias')
-  const [hourlySlots, setHourlySlots] = useState<HourlySlot[]>([])
-  const [loadingHourly, setLoadingHourly] = useState(false)
-  const [selectedDate, setSelectedDate] = useState(project.shoot_date)
-  const [exporting, setExporting] = useState(false)
-  const [exportStatus, setExportStatus] = useState('')
-
-  useEffect(() => {
-    if (forecastMode !== 'dia') return
-    setLoadingHourly(true)
-    fetchHourlySlots(project, selectedDate).then(setHourlySlots).catch(console.error).finally(() => setLoadingHourly(false))
-  }, [forecastMode, selectedDate, project])
-
-  const ai = project.aianalysis
-  const firstDay = ai?.forecast?.[0]
-
-  async function saveReport(type: '5dias' | 'horario', fileName: string, date: string) {
-    await supabase.from('reports').insert({ project_id: project.id, project_name: project.name, type, date, location: project.location, file_name: fileName, created_at: new Date().toISOString(), narrative_preview: type === 'horario' ? `Parte hora a hora de ${project.location}` : `Forecast 5 días de ${project.location}` })
-  }
-
-  async function handleExport5Days() {
-    if (!ai) return
-    setExporting(true); setExportStatus('Generando PDF...')
-    try { const fn = await generatePDF5Days(project, ai); await saveReport('5dias', fn, project.shoot_date); setExportStatus('✅ PDF generado') }
-    catch { setExportStatus('❌ Error al generar PDF') }
-    finally { setExporting(false); setTimeout(() => setExportStatus(''), 2500) }
-  }
-
-  async function handleExportHourly() {
-    if (!canExportDayPDF) { alert('Esta función requiere Freelance Pro o Studio'); return }
-    setExporting(true); setExportStatus('Preparando parte horario...')
-    try {
-      const slots = hourlySlots.length ? hourlySlots : await fetchHourlySlots(project, selectedDate)
-      const fn = await generatePDFHourly(project, selectedDate, slots, isAdvanced)
-      await saveReport('horario', fn, selectedDate); setExportStatus('✅ Parte horario generado')
-    } catch { setExportStatus('❌ Error al generar parte horario') }
-    finally { setExporting(false); setTimeout(() => setExportStatus(''), 3000) }
-  }
-
-  return (
-    <div style={{ padding: '0 22px 22px' }}>
-
-      {/* ── Información enriquecida del proyecto ── */}
-      <ProjectInfoPanel
-        project={project}
-        aiAnalysis={project.aianalysis}
-      />
-
-      {/* KPI row */}
-      {firstDay && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 18 }}>
-          <KpiCard icon={<Thermometer size={16} />} label="Tmax" value={`${firstDay.tempMax}°C`} sub="Máxima prevista" color="#fb923c" />
-          <KpiCard icon={<Thermometer size={16} />} label="Tmin" value={`${firstDay.tempMin}°C`} sub="Mínima prevista" color="#60a5fa" />
-          <KpiCard icon={<Wind size={16} />} label="Viento" value={`${firstDay.windSpeed} km/h`} sub="Velocidad media" color="#c084fc" />
-          <KpiCard icon={<Droplets size={16} />} label="Lluvia" value={`${firstDay.precipitation} mm`} sub="Precipitación" color="#38bdf8" />
-        </div>
-      )}
-
-      {/* AI Summary */}
-      {ai?.resumen && (
-        <div style={{
-          padding: '16px 20px', borderRadius: 16, marginBottom: 18,
-          background: 'linear-gradient(135deg, rgba(59,130,246,0.08), rgba(34,211,238,0.05))',
-          border: '1px solid rgba(59,130,246,0.18)',
-          position: 'relative', overflow: 'hidden',
-        }}>
-          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(90deg, transparent, rgba(59,130,246,0.5), transparent)' }} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <div style={{ width: 24, height: 24, borderRadius: 7, background: C.blueDim, display: 'grid', placeItems: 'center', color: '#60a5fa' }}>
-              <Bot size={13} />
-            </div>
-            <span style={{ fontSize: 10, fontWeight: 900, color: '#93c5fd', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-              {isAdvanced ? 'Gemini Pro' : 'Gemini'} · Análisis IA
-            </span>
-          </div>
-          <p style={{ margin: 0, color: '#cbd5e1', lineHeight: 1.7, fontSize: 13 }}>{ai.resumen}</p>
-          {ai.mejor_dia && (
-            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 12, color: C.textMuted }}>Mejor día recomendado:</span>
-              <span style={{ fontSize: 12, fontWeight: 800, color: C.green, background: C.greenDim, padding: '2px 10px', borderRadius: 6, border: `1px solid rgba(16,185,129,0.2)` }}>
-                {ai.mejor_dia}
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Mode tabs */}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
-        {(['5dias', 'dia'] as const).map(mode => (
-          <button key={mode} onClick={() => setForecastMode(mode)} style={{
-            padding: '7px 14px', borderRadius: 10, fontSize: 12, fontWeight: 800, cursor: 'pointer',
-            border: forecastMode === mode ? `1px solid rgba(59,130,246,0.35)` : `1px solid ${C.border}`,
-            background: forecastMode === mode ? C.blueDim : C.surface,
-            color: forecastMode === mode ? '#93c5fd' : C.textMuted, transition: 'all 0.15s',
-          }}>
-            {mode === '5dias' ? '📅 Forecast 5 días' : '⏱ Parte hora a hora'}
-          </button>
-        ))}
-        {forecastMode === 'dia' && (
-          <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} style={{
-            marginLeft: 'auto', padding: '7px 12px', borderRadius: 10,
-            border: `1px solid ${C.border}`, background: C.surface,
-            color: C.text, fontSize: 12, colorScheme: 'dark', outline: 'none',
-          }} />
-        )}
-      </div>
-
-      {forecastMode === 'dia' && loadingHourly ? (
-        <div style={{ minHeight: 120, display: 'grid', placeItems: 'center', color: C.textSubtle }}>
-          <Loader2 size={18} style={{ animation: 'spin .8s linear infinite' }} />
-        </div>
-      ) : ai ? (
-        <ProjectForecastView ai={ai} mode={forecastMode} hourlySlots={hourlySlots} selectedDate={selectedDate} location={project.location} />
-      ) : (
-        <div style={{ color: C.textSubtle, fontSize: 13, padding: '20px 0' }}>Sin análisis disponible para este proyecto.</div>
-      )}
-
-      {/* Export — siempre visible, bloqueado según plan */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
-        marginTop: 24, paddingTop: 20, borderTop: `1px solid rgba(255,255,255,0.08)`,
-      }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: '#eef2ff' }}>Exportar informe PDF</span>
-          <span style={{
-            fontSize: 12,
-            color: exportStatus.startsWith('✅') ? '#10b981'
-              : exportStatus.startsWith('❌') ? '#ef4444'
-              : '#8896b0',
-            display: 'flex', alignItems: 'center', gap: 5,
-          }}>
-            {exporting && <Loader2 size={11} style={{ animation: 'spin .8s linear infinite' }} />}
-            {exportStatus || 'Descarga el análisis completo de este proyecto'}
-          </span>
-        </div>
-
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          {/* PDF 5 días — disponible para todos los planes con ai */}
-          <button
-            onClick={handleExport5Days}
-            disabled={exporting || !ai}
-            title={!ai ? 'No hay análisis disponible' : 'Descargar forecast 5 días'}
-            style={{
-              padding: '10px 18px', borderRadius: 12,
-              border: '1px solid rgba(59,130,246,0.35)',
-              background: (!ai || exporting)
-                ? 'rgba(59,130,246,0.05)'
-                : 'linear-gradient(135deg, rgba(59,130,246,0.2), rgba(59,130,246,0.1))',
-              color: (!ai || exporting) ? '#4a5568' : '#93c5fd',
-              fontWeight: 800, fontSize: 12, cursor: (!ai || exporting) ? 'not-allowed' : 'pointer',
-              display: 'inline-flex', alignItems: 'center', gap: 7,
-              transition: 'all 0.15s',
-              boxShadow: (!ai || exporting) ? 'none' : '0 0 16px rgba(59,130,246,0.15)',
-            }}
-            onMouseEnter={e => { if (ai && !exporting) (e.currentTarget as any).style.boxShadow = '0 0 24px rgba(59,130,246,0.3)' }}
-            onMouseLeave={e => { (e.currentTarget as any).style.boxShadow = (!ai || exporting) ? 'none' : '0 0 16px rgba(59,130,246,0.15)' }}
-          >
-            <FileText size={14} />
-            {exporting ? 'Generando...' : 'PDF 5 días'}
-          </button>
-
-          {/* Parte horario — requiere plan Freelance Pro+ */}
-          <button
-            onClick={handleExportHourly}
-            disabled={exporting}
-            title={!canExportDayPDF ? 'Disponible en Freelance Pro y Studio' : 'Descargar parte horario con IA'}
-            style={{
-              padding: '10px 18px', borderRadius: 12,
-              border: canExportDayPDF
-                ? '1px solid rgba(34,211,238,0.35)'
-                : `1px solid rgba(255,255,255,0.08)`,
-              background: canExportDayPDF
-                ? 'linear-gradient(135deg, rgba(34,211,238,0.15), rgba(34,211,238,0.08))'
-                : 'rgba(255,255,255,0.03)',
-              color: canExportDayPDF ? '#22d3ee' : '#4a5568',
-              fontWeight: 800, fontSize: 12,
-              cursor: exporting ? 'not-allowed' : 'pointer',
-              display: 'inline-flex', alignItems: 'center', gap: 7,
-              transition: 'all 0.15s',
-              boxShadow: canExportDayPDF ? '0 0 16px rgba(34,211,238,0.1)' : 'none',
-            }}
-            onMouseEnter={e => { if (canExportDayPDF && !exporting) (e.currentTarget as any).style.boxShadow = '0 0 24px rgba(34,211,238,0.25)' }}
-            onMouseLeave={e => { (e.currentTarget as any).style.boxShadow = canExportDayPDF ? '0 0 16px rgba(34,211,238,0.1)' : 'none' }}
-          >
-            <Clock3 size={14} />
-            {canExportDayPDF ? 'Parte horario IA' : '🔒 Freelance Pro'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── Main Dashboard ───────────────────────────────────────────────────────────
-export function DashboardPage() {
-  const navigate = useNavigate()
-  const { user, token, logout, canCreateProject, canExportPDF, canExportDayPDF, canUseAI, canUseAdvancedAI, planLabel, projectLimit } = useAuth()
-
-  const [projects, setProjects] = useState<Project[]>([])
-  const [loadingProjects, setLoadingProjects] = useState(true)
-  const [activeSection, setActiveSection] = useState<'overview' | 'projects' | 'reports' | 'tools' | 'profile'>('overview')
-  const [expandedId, setExpandedId] = useState<number | null>(null)
-  const [showModal, setShowModal] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [userCoords, setUserCoords] = useState<{ lat: number; lon: number } | null>(null)
-
-  useEffect(() => {
-    if (!navigator.geolocation) return
-    navigator.geolocation.getCurrentPosition(
-      pos => setUserCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-      () => setUserCoords(null),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${KEY}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) }
     )
-  }, [])
+    if (!res.ok) return fallback
+    const data = await res.json()
+    if (data.error) return fallback
+    const raw = (data.candidates?.[0]?.content?.parts?.[0]?.text ?? '').replace(/```json\n?/g,'').replace(/```\n?/g,'').trim()
+    const parsed = JSON.parse(raw)
+    return { ...parsed, forecast: parsed.forecast?.length ? parsed.forecast : forecast }
+  } catch { return fallback }
+}
 
-  const loadProjects = useCallback(async () => {
-    if (!token) return
+// ── Componente principal ──────────────────────────────────────────────────────
+
+export function DashboardPage() {
+  const { user, logout } = useAuth()
+  const navigate = useNavigate()
+
+  const [tab, setTab] = useState<Tab>('projects')
+  const [projects, setProjects] = useState<Project[]>([])
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null)
+  const [aiAnalysis, setAiAnalysis] = useState<AiAnalysis | null>(null)
+  const [hourlySlots, setHourlySlots] = useState<HourlySlot[]>([])
+  const [analysisView, setAnalysisView] = useState<AnalysisView>('5dias')
+  const [loadingProjects, setLoadingProjects] = useState(true)
+  const [loadingAnalysis, setLoadingAnalysis] = useState(false)
+  const [analysisError, setAnalysisError] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [showNewForm, setShowNewForm] = useState(false)
+  const [newProject, setNewProject] = useState({ name: '', location: '', shoot_date: '' })
+  const [formError, setFormError] = useState('')
+
+  const userPlan: string = (user as any)?.user_metadata?.plan ?? 'free'
+  const planCfg = PLANS[userPlan] ?? PLANS.free
+
+  useEffect(() => {
+    if (!user) { navigate('/'); return }
+    loadProjects()
+  }, [user])
+
+  async function loadProjects() {
     setLoadingProjects(true)
     try {
-      const res = await fetch('/api/projects', { headers: { Authorization: `Bearer ${token}` } })
-      const data = await res.json()
-      if (res.ok) setProjects(data.projects ?? [])
-    } finally { setLoadingProjects(false) }
-  }, [token])
+      const data = await getProjects(user!.id)
+      setProjects(data)
+      if (data.length > 0) setSelectedProject(data[0])
+    } catch (e) { console.error(e) }
+    finally { setLoadingProjects(false) }
+  }
 
-  useEffect(() => { loadProjects() }, [loadProjects])
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    if (params.get('tab') === 'profile') setActiveSection('profile')
-    if (params.get('tab') === 'reports') setActiveSection('reports')
+  const runAnalysis = useCallback(async (project: Project) => {
+    setLoadingAnalysis(true)
+    setAnalysisError('')
+    setAiAnalysis(null)
+    setHourlySlots([])
+    try {
+      const forecast = await fetchFiveDayForecast(project)
+      const ai = await analyzeWithGemini(forecast, project)
+      setAiAnalysis(ai)
+    } catch (e: any) {
+      setAnalysisError(e?.message ?? 'Error al obtener el análisis meteorológico.')
+    } finally {
+      setLoadingAnalysis(false)
+    }
   }, [])
 
-  function handleCreated(project: Project) {
-    setProjects(prev => [project, ...prev])
-    setShowModal(false)
-    setActiveSection('projects')
-    setExpandedId(project.id)
+  function selectProject(p: Project) {
+    setSelectedProject(p)
+    setAiAnalysis(null)
+    setAnalysisError('')
+    setTab('analysis')
   }
 
-  async function handleDeleteProject(id: number) {
-    if (!confirm('¿Eliminar este proyecto?')) return
-    await fetch(`/api/projects?id=${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
-    setProjects(prev => prev.filter(p => p.id !== id))
-    if (expandedId === id) setExpandedId(null)
+  async function handleCreateProject() {
+    if (!newProject.name.trim() || !newProject.location.trim() || !newProject.shoot_date) {
+      setFormError('Completa todos los campos.'); return
+    }
+    const limit = planCfg.limit
+    if (limit !== 'unlimited' && projects.length >= limit) {
+      setFormError(`Tu plan ${planCfg.label} permite máximo ${limit} proyecto${limit === 1 ? '' : 's'}.`); return
+    }
+    setCreating(true); setFormError('')
+    try {
+      const created = await createProject(user!.id, newProject)
+      setProjects(p => [created, ...p])
+      setShowNewForm(false)
+      setNewProject({ name: '', location: '', shoot_date: '' })
+      selectProject(created)
+    } catch { setFormError('Error al crear el proyecto.') }
+    finally { setCreating(false) }
   }
 
-  const navItems = [
-    { id: 'overview', label: 'Inicio', icon: <LayoutDashboard size={16} />, color: C.blue },
-    { id: 'projects', label: 'Proyectos', icon: <FolderOpen size={16} />, color: C.cyan },
-    { id: 'reports', label: 'Reportes', icon: <Archive size={16} />, color: C.green },
-    { id: 'tools', label: 'Herramientas', icon: <BarChart3 size={16} />, color: C.violet },
-    { id: 'profile', label: 'Configuración', icon: <Settings size={16} />, color: C.amber },
-  ] as const
+  async function handleDeleteProject(id: string) {
+    if (!confirm('¿Eliminar este proyecto permanentemente?')) return
+    await deleteProject(id)
+    const rest = projects.filter(p => p.id !== id)
+    setProjects(rest)
+    if (selectedProject?.id === id) {
+      setSelectedProject(rest[0] ?? null)
+      setAiAnalysis(null)
+    }
+  }
 
-  // Plan color
-  const planColors: Record<string, string> = { free: '#64748b', basico: C.blue, freelance_pro: C.cyan, studio: C.violet }
-  const planColor = user ? (planColors[user.plan] ?? C.blue) : C.blue
-  const initials = user?.name ? user.name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase() : '?'
-
-  const kpis = useMemo(() => [
-    {
-      label: 'Proyectos',
-      value: typeof projectLimit() === 'number' ? `${projects.length}/${projectLimit()}` : String(projects.length),
-      sub: typeof projectLimit() === 'number' ? 'Activos sobre tu límite de plan' : 'Proyectos activos · ilimitados',
-      icon: <FolderOpen size={18} />, color: C.blue,
-      onClick: () => setActiveSection('projects'),
-    },
-    {
-      label: 'Reportes PDF',
-      value: canExportPDF() ? 'Activo' : 'Bloqueado',
-      sub: canExportPDF() ? 'Exportación habilitada en tu plan' : 'Disponible en Freelance Pro+',
-      icon: <FileText size={18} />, color: canExportPDF() ? C.green : C.textSubtle,
-      onClick: canExportPDF() ? () => setActiveSection('reports') : undefined,
-    },
-    {
-      label: 'Motor IA',
-      value: canUseAdvancedAI() ? 'Gemini Pro' : canUseAI() ? 'Gemini' : 'Sin IA',
-      sub: canUseAdvancedAI() ? 'Análisis avanzado de producción' : canUseAI() ? 'Análisis estándar disponible' : 'Mejora tu plan',
-      icon: <Bot size={18} />, color: C.violet,
-    },
-    {
-      label: 'Herramientas',
-      value: 'Activas',
-      sub: 'Mapa, comparador y timeline',
-      icon: <Zap size={18} />, color: C.amber,
-      onClick: () => setActiveSection('tools'),
-    },
-  ], [projects.length, projectLimit, canUseAdvancedAI, canUseAI, canExportPDF])
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ minHeight: '100vh', paddingTop: 68, display: 'flex', background: '#07111f', position: 'relative' }}>
-      <AmbientOrbs />
-      <ScanLines />
+    <div style={{ minHeight: '100vh', background: T.bg, fontFamily: "'Inter','Segoe UI',sans-serif", display: 'flex', flexDirection: 'column' }}>
 
-      {/* ── Sidebar ─────────────────────────────────────────────────────── */}
-      <aside style={{
-        width: sidebarOpen ? 232 : 68, transition: 'width 0.22s cubic-bezier(0.4,0,0.2,1)',
-        borderRight: `1px solid rgba(255,255,255,0.08)`,
-        borderLeft: `1px solid rgba(255,255,255,0.06)`,
-        borderTop: `1px solid rgba(255,255,255,0.06)`,
-        borderBottom: `1px solid rgba(255,255,255,0.06)`,
-        borderRadius: 20,
-        background: 'rgba(7,17,31,0.95)',
-        position: 'sticky', top: 80,
-        height: 'calc(100vh - 100px)',
-        padding: 10, display: 'flex', flexDirection: 'column', gap: 6,
-        zIndex: 10, flexShrink: 0,
-        backdropFilter: 'blur(24px)',
-        WebkitBackdropFilter: 'blur(24px)',
-        margin: '12px 0 12px 12px',
+      {/* ── Topbar ── */}
+      <header style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '0 24px', height: 58,
+        background: 'rgba(5,13,26,0.85)', borderBottom: '1px solid rgba(255,255,255,0.06)',
+        backdropFilter: 'blur(20px)', position: 'sticky', top: 0, zIndex: 50,
       }}>
-        {/* Toggle */}
-        <button
-          onClick={() => setSidebarOpen(s => !s)}
-          style={{
-            height: 40, borderRadius: 11,
-            border: `1px solid ${C.border}`, background: C.surface,
-            color: C.textMuted, display: 'flex', alignItems: 'center',
-            justifyContent: sidebarOpen ? 'flex-end' : 'center',
-            padding: '0 12px', cursor: 'pointer', transition: 'all 0.15s',
-          }}
-        >
-          <ChevronRight size={15} style={{ transform: sidebarOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
-        </button>
-
-        {/* Nav */}
-        <div style={{ display: 'grid', gap: 4, flex: 1 }}>
-          {navItems.map(item => {
-            const active = activeSection === item.id
-            return (
-              <button
-                key={item.id}
-                onClick={() => setActiveSection(item.id)}
-                style={{
-                  height: 42, borderRadius: 11,
-                  border: active ? `1px solid ${item.color}30` : '1px solid transparent',
-                  background: active ? `${item.color}12` : 'transparent',
-                  color: active ? item.color : C.textMuted,
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: sidebarOpen ? '0 13px' : '0',
-                  justifyContent: sidebarOpen ? 'flex-start' : 'center',
-                  fontSize: 13, fontWeight: 700, cursor: 'pointer',
-                  transition: 'all 0.15s',
-                }}
-                onMouseEnter={e => { if (!active) { (e.currentTarget as any).style.background = C.surface; (e.currentTarget as any).style.color = C.text } }}
-                onMouseLeave={e => { if (!active) { (e.currentTarget as any).style.background = 'transparent'; (e.currentTarget as any).style.color = C.textMuted } }}
-              >
-                {item.icon}
-                {sidebarOpen && <span style={{ whiteSpace: 'nowrap', overflow: 'hidden' }}>{item.label}</span>}
-              </button>
-            )
-          })}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            <rect width="28" height="28" rx="7" fill="rgba(79,152,163,0.15)"/>
+            <path d="M7 18 Q10 10 14 14 Q18 18 21 10" stroke="#4f98a3" strokeWidth="2" strokeLinecap="round" fill="none"/>
+            <circle cx="14" cy="14" r="2.5" fill="#4f98a3"/>
+          </svg>
+          <span style={{ color: T.text, fontSize: 16, fontWeight: 700, letterSpacing: '-0.02em' }}>Weather Studio</span>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 5, background: planCfg.bg, border: `1px solid ${planCfg.border}`, color: planCfg.color, fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20 }}>
+            {planCfg.icon} {planCfg.label}
+          </span>
+          <button onClick={async () => { await logout(); navigate('/') }} style={btnGhost} title="Cerrar sesión">
+            <LogOut size={14} />
+          </button>
+        </div>
+      </header>
 
-        {/* User card */}
-        <div style={{
-          borderRadius: 14, padding: sidebarOpen ? '12px 14px' : '10px',
-          border: `1px solid ${C.border}`, background: C.surface,
-          transition: 'all 0.22s',
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+
+        {/* ── Sidebar ── */}
+        <aside style={{
+          width: 220, flexShrink: 0,
+          background: 'rgba(5,13,26,0.65)',
+          borderRight: '1px solid rgba(255,255,255,0.06)',
+          padding: '20px 12px', display: 'flex', flexDirection: 'column', gap: 4,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{
-              width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-              background: `linear-gradient(135deg, ${planColor}, ${planColor}88)`,
-              display: 'grid', placeItems: 'center',
-              fontSize: 12, fontWeight: 900, color: 'white',
+          {([
+            { id: 'projects' as Tab, label: 'Proyectos',    icon: <FolderOpen size={15}/> },
+            { id: 'analysis' as Tab, label: 'Análisis',     icon: <BarChart2 size={15}/>  },
+            { id: 'history'  as Tab, label: 'Historial PDF',icon: <FileText size={15}/>   },
+            { id: 'account'  as Tab, label: 'Mi cuenta',    icon: <User size={15}/>       },
+          ]).map(item => (
+            <button key={item.id} onClick={() => setTab(item.id)} style={{
+              display: 'flex', alignItems: 'center', gap: 9,
+              padding: '9px 12px', borderRadius: 9,
+              background: tab === item.id ? T.accentBg : 'none',
+              border: tab === item.id ? `1px solid ${T.accentBorder}` : '1px solid transparent',
+              borderLeft: tab === item.id ? `2px solid ${T.accent}` : '2px solid transparent',
+              color: tab === item.id ? '#d9fbff' : T.muted,
+              fontSize: 13, fontWeight: tab === item.id ? 600 : 400,
+              cursor: 'pointer', textAlign: 'left', width: '100%',
+              transition: 'all 0.15s ease',
             }}>
-              {initials}
-            </div>
-            {sidebarOpen && (
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 12, fontWeight: 800, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {user?.name?.split(' ')[0]}
+              <span style={{ color: tab === item.id ? T.accent : T.faint }}>{item.icon}</span>
+              {item.label}
+            </button>
+          ))}
+        </aside>
+
+        {/* ── Main ── */}
+        <main style={{ flex: 1, overflow: 'auto', padding: 28, display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+          {/* ═══ TAB: PROYECTOS ═══ */}
+          {tab === 'projects' && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+                <div>
+                  <h1 style={{ color: T.text, fontSize: 22, fontWeight: 700, margin: 0 }}>Proyectos</h1>
+                  <p style={{ color: T.muted, fontSize: 13, margin: '4px 0 0' }}>
+                    {projects.length} proyecto{projects.length !== 1 ? 's' : ''}
+                    {typeof planCfg.limit === 'number' ? ` · Límite: ${planCfg.limit}` : ' · Ilimitados'}
+                  </p>
                 </div>
-                <div style={{ fontSize: 10, color: planColor, fontWeight: 700 }}>{planLabel()}</div>
+                <button
+                  onClick={() => setShowNewForm(v => !v)}
+                  disabled={typeof planCfg.limit === 'number' && projects.length >= planCfg.limit}
+                  style={{ ...btnPrimary, opacity: (typeof planCfg.limit === 'number' && projects.length >= planCfg.limit) ? 0.5 : 1 }}
+                >
+                  <Plus size={15}/> Nuevo proyecto
+                </button>
               </div>
-            )}
-            {sidebarOpen && (
-              <button
-                onClick={() => { logout(); navigate('/') }}
-                title="Cerrar sesión"
-                style={{ color: C.textSubtle, cursor: 'pointer', padding: 4, background: 'transparent', border: 'none', flexShrink: 0, transition: 'color 0.15s' }}
-                onMouseEnter={e => ((e.currentTarget as any).style.color = C.red)}
-                onMouseLeave={e => ((e.currentTarget as any).style.color = C.textSubtle)}
-              >
-                <LogOut size={14} />
-              </button>
-            )}
-          </div>
-        </div>
-      </aside>
 
-      {/* ── Main content ─────────────────────────────────────────────────── */}
-      <main style={{ flex: 1, minWidth: 0, padding: '32px 28px 80px', position: 'relative', zIndex: 2 }}>
-
-        {/* ── OVERVIEW ─────────────────────────────────────────────────── */}
-        {activeSection === 'overview' && (
-          <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-            {/* Header */}
-            <div style={{ marginBottom: 28 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
-                <div style={{ fontSize: 28, fontWeight: 900, color: C.text, letterSpacing: '-0.03em', lineHeight: 1 }}>
-                  Hola, {user?.name?.split(' ')[0]} 👋
-                </div>
-                <span style={{
-                  fontSize: 10, fontWeight: 900, padding: '4px 10px', borderRadius: 7,
-                  background: `${planColor}15`, border: `1px solid ${planColor}30`,
-                  color: planColor, letterSpacing: '0.08em', textTransform: 'uppercase',
-                }}>
-                  {planLabel()}
-                </span>
-              </div>
-              <p style={{ margin: 0, color: C.textMuted, fontSize: 14, lineHeight: 1.6 }}>
-                Panel de control meteorológico para tu producción audiovisual.
-              </p>
-            </div>
-
-            {/* KPI grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12, marginBottom: 24 }}>
-              {kpis.map((kpi, i) => (
-                <motion.div key={kpi.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}>
-                  <KpiCard {...kpi} />
-                </motion.div>
-              ))}
-            </div>
-
-            {/* Recent projects */}
-            {projects.length > 0 && (
-              <Shell
-                title="Proyectos recientes"
-                badge={`${projects.length} activos`}
-                action={
-                  <button onClick={() => setActiveSection('projects')} style={{
-                    fontSize: 12, color: C.blue, fontWeight: 700, background: 'transparent',
-                    border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
-                  }}>
-                    Ver todos <ChevronRight size={13} />
-                  </button>
-                }
-              >
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
-                  {projects.slice(0, 4).map((project, i) => {
-                    const firstDay = project.aianalysis?.forecast?.[0]
-                    return (
-                      <motion.div
-                        key={project.id}
-                        initial={{ opacity: 0, y: 16 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: i * 0.06 }}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => { setActiveSection('projects'); setExpandedId(project.id) }}
-                        onKeyDown={e => { if (e.key === 'Enter') { setActiveSection('projects'); setExpandedId(project.id) } }}
-                        style={{
-                          padding: 18, borderRadius: 16, cursor: 'pointer',
-                          background: C.surface, border: `1px solid ${C.border}`,
-                          transition: 'all 0.15s',
-                        }}
-                        onMouseEnter={e => { (e.currentTarget as any).style.background = C.surfaceHover; (e.currentTarget as any).style.borderColor = C.borderStrong }}
-                        onMouseLeave={e => { (e.currentTarget as any).style.background = C.surface; (e.currentTarget as any).style.borderColor = C.border }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 14, fontWeight: 800, color: C.text, lineHeight: 1.25, marginBottom: 6 }}>{project.name}</div>
-                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, color: C.textMuted }}>
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><MapPin size={10} /> {project.location}</span>
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><Calendar size={10} /> {formatDate(project.shoot_date)}</span>
-                            </div>
-                          </div>
-                          <RiskBadge risk={firstDay?.riesgo} />
-                        </div>
-                        {firstDay && (
-                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            <Pill color="#fb923c">🌡 {firstDay.tempMax}°</Pill>
-                            <Pill color="#c084fc">💨 {firstDay.windSpeed}km/h</Pill>
-                            <Pill color="#38bdf8">💧 {firstDay.precipitation}mm</Pill>
-                          </div>
-                        )}
-                      </motion.div>
-                    )
-                  })}
-                </div>
-              </Shell>
-            )}
-
-            {/* Weather + Comparator */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: 16, marginTop: 16 }}>
-              <Shell title="Clima en tiempo real" badge="EN DIRECTO" badgeColor={C.green}>
-                <WeatherWidget />
-              </Shell>
-              <Shell title="Comparador de fechas" badge="IA">
-                <DateComparator />
-              </Shell>
-            </div>
-
-            {/* Viability + Timeline */}
-            <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
-              <Shell title="Índice de viabilidad del rodaje" badge="SHOOT VIABILITY">
-                <ShootViabilityScore coords={userCoords} />
-              </Shell>
-              <Shell title="Línea climática" badge="TIMELINE">
-                <ClimateTimeline coords={userCoords} />
-              </Shell>
-            </div>
-          </motion.div>
-        )}
-
-        {/* ── PROJECTS ─────────────────────────────────────────────────── */}
-        {activeSection === 'projects' && (
-          <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
-              <div>
-                <div style={{ fontSize: 24, fontWeight: 900, color: C.text, marginBottom: 4, letterSpacing: '-0.02em' }}>Mis proyectos</div>
-                <p style={{ margin: 0, color: C.textMuted, fontSize: 13 }}>
-                  {projects.length} proyecto{projects.length === 1 ? '' : 's'} activo{projects.length === 1 ? '' : 's'}
-                  {typeof projectLimit() === 'number' ? ` · Límite: ${projectLimit()}` : ' · Ilimitados'}
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  if (!canCreateProject(projects.length)) { alert(`Tu plan ${planLabel()} permite un máximo de ${projectLimit()} proyectos.`); return }
-                  setShowModal(true)
-                }}
-                style={{
-                  height: 44, padding: '0 20px', borderRadius: 12, border: 'none',
-                  background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
-                  color: '#fff', fontWeight: 800, fontSize: 13,
-                  display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-                  boxShadow: '0 4px 16px rgba(59,130,246,0.3)', transition: 'all 0.15s',
-                }}
-                onMouseEnter={e => ((e.currentTarget as any).style.transform = 'translateY(-1px)')}
-                onMouseLeave={e => ((e.currentTarget as any).style.transform = 'none')}
-              >
-                <Plus size={15} /> Nuevo proyecto
-              </button>
-            </div>
-
-            {loadingProjects ? (
-              <div style={{ minHeight: 240, display: 'grid', placeItems: 'center', color: C.textSubtle }}>
-                <div style={{ textAlign: 'center' }}>
-                  <Loader2 size={24} style={{ animation: 'spin .8s linear infinite', marginBottom: 12, color: C.blue }} />
-                  <div style={{ fontSize: 13 }}>Cargando proyectos...</div>
-                </div>
-              </div>
-            ) : projects.length === 0 ? (
-              <Shell title="Sin proyectos">
-                <div style={{ minHeight: 260, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
-                  <div>
-                    <div style={{ width: 64, height: 64, borderRadius: 18, background: C.blueDim, border: `1px solid rgba(59,130,246,0.2)`, display: 'grid', placeItems: 'center', margin: '0 auto 20px', color: '#60a5fa' }}>
-                      <FolderOpen size={28} />
+              <AnimatePresence>
+              {showNewForm && (
+                <motion.div initial={{ opacity:0, y:-10 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0, y:-10 }}
+                  style={{ ...card, padding: 20, marginBottom: 20 }}>
+                  <h3 style={{ color: T.text, fontSize: 15, fontWeight: 600, marginBottom: 16, marginTop: 0 }}>Nuevo proyecto de rodaje</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+                    <div>
+                      <label style={labelStyle}>Nombre del proyecto</label>
+                      <input type="text" placeholder="Ej: Cortometraje Albufera" value={newProject.name}
+                        onChange={e => setNewProject(p => ({ ...p, name: e.target.value }))} style={inputStyle}
+                        onFocus={e => (e.target.style.borderColor = T.accent)} onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.08)')}/>
                     </div>
-                    <div style={{ color: C.text, fontSize: 18, fontWeight: 900, marginBottom: 10 }}>Crea tu primer proyecto</div>
-                    <p style={{ margin: '0 0 24px', color: C.textMuted, fontSize: 13, lineHeight: 1.7, maxWidth: 380 }}>
-                      Indica la ubicación y fecha de rodaje para obtener un análisis meteorológico detallado con IA.
-                    </p>
-                    <button
-                      onClick={() => setShowModal(true)}
-                      style={{
-                        height: 44, padding: '0 24px', borderRadius: 12, border: 'none',
-                        background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
-                        color: '#fff', fontWeight: 800, fontSize: 13,
-                        display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-                        boxShadow: '0 4px 16px rgba(59,130,246,0.3)',
-                      }}
-                    >
-                      <Plus size={15} /> Crear primer proyecto
+                    <div>
+                      <label style={labelStyle}>Fecha de rodaje</label>
+                      <input type="date" value={newProject.shoot_date}
+                        onChange={e => setNewProject(p => ({ ...p, shoot_date: e.target.value }))} style={inputStyle}
+                        onFocus={e => (e.target.style.borderColor = T.accent)} onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.08)')}/>
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={labelStyle}>Ubicación</label>
+                    <input type="text" placeholder="Ej: Valencia, España" value={newProject.location}
+                      onChange={e => setNewProject(p => ({ ...p, location: e.target.value }))} style={inputStyle}
+                      onFocus={e => (e.target.style.borderColor = T.accent)} onBlur={e => (e.target.style.borderColor = 'rgba(255,255,255,0.08)')}/>
+                  </div>
+                  {formError && <p style={{ color: '#f87171', fontSize: 12, marginBottom: 12 }}>{formError}</p>}
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={handleCreateProject} disabled={creating} style={btnPrimary}>
+                      {creating ? <Loader size={14} style={{ animation: 'spin 1s linear infinite' }}/> : <Plus size={14}/>}
+                      {creating ? 'Creando...' : 'Crear proyecto'}
                     </button>
+                    <button onClick={() => { setShowNewForm(false); setFormError('') }} style={btnGhost}>Cancelar</button>
+                  </div>
+                </motion.div>
+              )}
+              </AnimatePresence>
+
+              {/* Lista */}
+              {loadingProjects ? (
+                <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                  {[1,2,3].map(i => <div key={i} style={{ height:80, borderRadius:T.r, background:'rgba(255,255,255,0.03)', animation:'shimmer 1.5s ease-in-out infinite' }}/>)}
+                </div>
+              ) : projects.length === 0 ? (
+                <div style={{ ...card, padding:'48px 24px', display:'flex', flexDirection:'column', alignItems:'center', textAlign:'center' }}>
+                  <FolderOpen size={36} color={T.faint} style={{ marginBottom:14 }}/>
+                  <p style={{ color:T.text, fontSize:15, fontWeight:600, marginBottom:8 }}>No tienes proyectos aún</p>
+                  <p style={{ color:T.muted, fontSize:13, marginBottom:20, maxWidth:300 }}>Crea tu primer proyecto indicando la ubicación y fecha de rodaje.</p>
+                  <button onClick={() => setShowNewForm(true)} style={btnPrimary}><Plus size={14}/> Crear primer proyecto</button>
+                </div>
+              ) : (
+                <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                  {projects.map(proj => (
+                    <motion.div key={proj.id} whileHover={{ y:-1 }}
+                      onClick={() => selectProject(proj)}
+                      style={{ ...card, padding:'14px 18px', cursor:'pointer', display:'flex', alignItems:'center', gap:14,
+                        border: selectedProject?.id === proj.id ? `1px solid ${T.accentBorder}` : T.border }}>
+                      <div style={{ width:40, height:40, borderRadius:10, flexShrink:0, background:T.accentBg, border:T.borderTeal, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                        <MapPin size={18} color={T.accent}/>
+                      </div>
+                      <div style={{ flex:1 }}>
+                        <p style={{ color:T.text, fontSize:14, fontWeight:600, margin:0 }}>{proj.name}</p>
+                        <p style={{ color:T.muted, fontSize:12, margin:'3px 0 0', display:'flex', alignItems:'center', gap:8 }}>
+                          <span style={{ display:'flex', alignItems:'center', gap:3 }}><MapPin size={10}/>{proj.location}</span>
+                          <span style={{ display:'flex', alignItems:'center', gap:3 }}><Calendar size={10}/>{proj.shoot_date}</span>
+                        </p>
+                      </div>
+                      <div style={{ display:'flex', gap:6 }} onClick={e => e.stopPropagation()}>
+                        <button onClick={() => selectProject(proj)} style={{ ...btnPrimary, padding:'6px 12px', fontSize:12 }}>
+                          <BarChart2 size={13}/> Analizar
+                        </button>
+                        <button onClick={() => handleDeleteProject(proj.id)} style={{ display:'flex', alignItems:'center', justifyContent:'center', width:32, height:32, borderRadius:7, background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.15)', color:'#f87171', cursor:'pointer' }}>
+                          <Trash2 size={13}/>
+                        </button>
+                      </div>
+                      <ChevronRight size={16} color={T.faint}/>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ═══ TAB: ANÁLISIS ═══ */}
+          {tab === 'analysis' && (
+            <div>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:12 }}>
+                <div>
+                  <h1 style={{ color:T.text, fontSize:22, fontWeight:700, margin:0 }}>Análisis meteorológico</h1>
+                  {selectedProject && <p style={{ color:T.muted, fontSize:13, margin:'4px 0 0' }}>{selectedProject.name} · {selectedProject.location}</p>}
+                </div>
+                <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                  {selectedProject && !aiAnalysis && !loadingAnalysis && (
+                    <button onClick={() => runAnalysis(selectedProject)} style={btnPrimary}>
+                      <BarChart2 size={14}/> Generar análisis
+                    </button>
+                  )}
+                  {selectedProject && aiAnalysis && (
+                    <ExportPDFButton
+                      project={selectedProject}
+                      ai={aiAnalysis}
+                      canHourly={planCfg.canHourly}
+                      selectedDate={selectedProject.shoot_date}
+                      isStudio={userPlan === 'studio'}
+                    />
+                  )}
+                </div>
+              </div>
+
+              {!selectedProject ? (
+                <div style={{ ...card, padding:'48px 24px', display:'flex', flexDirection:'column', alignItems:'center', textAlign:'center' }}>
+                  <BarChart2 size={36} color={T.faint} style={{ marginBottom:14 }}/>
+                  <p style={{ color:T.text, fontSize:15, fontWeight:600, marginBottom:8 }}>Selecciona un proyecto</p>
+                  <p style={{ color:T.muted, fontSize:13, marginBottom:20 }}>Ve a Proyectos y haz clic en «Analizar».</p>
+                  <button onClick={() => setTab('projects')} style={btnPrimary}><FolderOpen size={14}/> Ver proyectos</button>
+                </div>
+              ) : loadingAnalysis ? (
+                <div style={{ ...card, padding:'64px 24px', display:'flex', flexDirection:'column', alignItems:'center', gap:16 }}>
+                  <Loader size={32} color={T.accent} style={{ animation:'spin 1s linear infinite' }}/>
+                  <p style={{ color:T.text, fontSize:15, fontWeight:600 }}>Obteniendo datos meteorológicos...</p>
+                  <p style={{ color:T.muted, fontSize:13 }}>Tomorrow.io + Gemini AI · puede tardar unos segundos</p>
+                </div>
+              ) : analysisError ? (
+                <div style={{ ...card, padding:'40px 24px', display:'flex', flexDirection:'column', alignItems:'center', gap:14, textAlign:'center' }}>
+                  <AlertTriangle size={32} color="#f59e0b"/>
+                  <p style={{ color:T.text, fontSize:14, fontWeight:600 }}>{analysisError}</p>
+                  <button onClick={() => runAnalysis(selectedProject)} style={btnPrimary}><RefreshCw size={14}/> Reintentar</button>
+                </div>
+              ) : !aiAnalysis ? (
+                <div style={{ ...card, padding:'64px 24px', display:'flex', flexDirection:'column', alignItems:'center', gap:16, textAlign:'center' }}>
+                  <BarChart2 size={40} color={T.faint}/>
+                  <p style={{ color:T.text, fontSize:15, fontWeight:600 }}>Listo para analizar</p>
+                  <p style={{ color:T.muted, fontSize:13, maxWidth:340 }}>Haz clic en «Generar análisis» para obtener el forecast de 5 días con evaluación IA para <strong style={{ color:T.text }}>{selectedProject.name}</strong>.</p>
+                  <button onClick={() => runAnalysis(selectedProject)} style={{ ...btnPrimary, padding:'12px 24px', fontSize:14 }}>
+                    <BarChart2 size={16}/> Generar análisis con IA
+                  </button>
+                </div>
+              ) : (
+                <div style={{ ...card, padding:0, overflow:'hidden' }}>
+                  {/* Selector de vista */}
+                  <div style={{ display:'flex', gap:0, borderBottom:'1px solid rgba(255,255,255,0.07)', padding:'0 20px' }}>
+                    {([
+                      { id:'5dias' as AnalysisView, label:'Forecast 5 días' },
+                      { id:'dia'   as AnalysisView, label:'Vista diaria' },
+                    ]).map(v => (
+                      <button key={v.id} onClick={() => setAnalysisView(v.id)} style={{
+                        padding:'14px 18px', background:'none', border:'none',
+                        borderBottom: analysisView === v.id ? `2px solid ${T.accent}` : '2px solid transparent',
+                        color: analysisView === v.id ? T.accent : T.muted,
+                        fontSize:13, fontWeight: analysisView === v.id ? 700 : 400,
+                        cursor:'pointer', transition:'all 0.15s ease',
+                      }}>{v.label}</button>
+                    ))}
+                  </div>
+                  <div style={{ padding:20 }}>
+                    <ProjectForecastView
+                      ai={aiAnalysis}
+                      mode={analysisView}
+                      hourlySlots={hourlySlots}
+                      selectedDate={selectedProject.shoot_date}
+                      location={selectedProject.location}
+                    />
                   </div>
                 </div>
-              </Shell>
-            ) : (
-              <div style={{ display: 'grid', gap: 12 }}>
-                {projects.map(project => {
-                  const open = expandedId === project.id
-                  return (
-                    <div key={project.id}>
-                      <ProjectHeaderCard
-                        project={project} open={open}
-                        onToggle={() => setExpandedId(open ? null : project.id)}
-                        onDelete={() => handleDeleteProject(project.id)}
-                      />
-                      <AnimatePresence>
-                        {open && (
-                          <motion.div
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: 'auto' }}
-                            exit={{ opacity: 0, height: 0 }}
-                            style={{ overflow: 'hidden' }}
-                          >
-                            <div style={{
-                              borderLeft: `1px solid rgba(59,130,246,0.2)`,
-                              borderRight: `1px solid rgba(59,130,246,0.2)`,
-                              borderBottom: `1px solid rgba(59,130,246,0.2)`,
-                              borderBottomLeftRadius: 20, borderBottomRightRadius: 20,
-                              background: 'rgba(5,12,22,0.7)',
-                              backdropFilter: 'blur(10px)',
-                            }}>
-                              <ProjectPanel
-                                project={project}
-                                canExportPDF={canExportPDF()}
-                                canExportDayPDF={canExportDayPDF()}
-                                isAdvanced={canUseAdvancedAI()}
-                              />
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </motion.div>
-        )}
-
-        {/* ── REPORTS ──────────────────────────────────────────────────── */}
-        {activeSection === 'reports' && user && (
-          <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-            <div style={{ fontSize: 24, fontWeight: 900, color: C.text, marginBottom: 4, letterSpacing: '-0.02em' }}>Reportes PDF</div>
-            <p style={{ margin: '0 0 24px', color: C.textMuted, fontSize: 13 }}>Historial de informes meteorológicos generados</p>
-            <ReportsSection userId={String(user.id)} />
-
-              {/* ── Historial Studio ── */}
-              <PdfHistoryPanel userId={String(user.id)} />
-          </motion.div>
-        )}
-
-        {/* ── TOOLS ────────────────────────────────────────────────────── */}
-        {activeSection === 'tools' && (
-          <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-            <div style={{ fontSize: 24, fontWeight: 900, color: C.text, marginBottom: 4, letterSpacing: '-0.02em' }}>Herramientas</div>
-            <p style={{ margin: '0 0 24px', color: C.textMuted, fontSize: 13 }}>Análisis meteorológico avanzado para tu producción</p>
-            <div style={{ display: 'grid', gap: 16 }}>
-              <Shell title="Mapa meteorológico en tiempo real" badge="EN DIRECTO" badgeColor={C.green}>
-                <WeatherMap />
-              </Shell>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: 16 }}>
-                <Shell title="Clima actual" badge="LIVE" badgeColor={C.green}>
-                  <WeatherWidget />
-                </Shell>
-                <Shell title="Comparador de fechas" badge="IA">
-                  <DateComparator />
-                </Shell>
-              </div>
-              <Shell title="Índice de viabilidad del rodaje" badge="SHOOT VIABILITY SCORE">
-                <ShootViabilityScore coords={userCoords} />
-              </Shell>
-              <Shell title="Línea climática hora a hora" badge="CLIMATE TIMELINE">
-                <ClimateTimeline coords={userCoords} />
-              </Shell>
+              )}
             </div>
-          </motion.div>
-        )}
+          )}
 
-        {/* ── PROFILE ──────────────────────────────────────────────────── */}
-        {activeSection === 'profile' && (
-          <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-            <div style={{ fontSize: 24, fontWeight: 900, color: C.text, marginBottom: 4, letterSpacing: '-0.02em' }}>Configuración</div>
-            <p style={{ margin: '0 0 24px', color: C.textMuted, fontSize: 13 }}>Gestiona tu cuenta, plan y preferencias</p>
-            <ConfigSection />
-          </motion.div>
-        )}
-      </main>
+          {/* ═══ TAB: HISTORIAL PDF ═══ */}
+          {tab === 'history' && (
+            <div>
+              <div style={{ marginBottom:20 }}>
+                <h1 style={{ color:T.text, fontSize:22, fontWeight:700, margin:0 }}>Historial de informes</h1>
+                <p style={{ color:T.muted, fontSize:13, margin:'4px 0 0' }}>PDFs generados — descarga o elimina desde Supabase Storage</p>
+              </div>
+              <div style={{ ...card, padding:20 }}>
+                {user
+                  ? <PdfHistoryPanel userId={user.id}/>
+                  : <p style={{ color:T.muted, fontSize:13 }}>Debes estar autenticado.</p>
+                }
+              </div>
+            </div>
+          )}
 
-      {/* ── Modal ──────────────────────────────────────────────────────── */}
-      <AnimatePresence>
-        {showModal && (
-          <CreateModal
-            onClose={() => setShowModal(false)}
-            onCreated={handleCreated}
-            token={token!}
-            isAdvanced={canUseAdvancedAI()}
-          />
-        )}
-      </AnimatePresence>
+          {/* ═══ TAB: CUENTA ═══ */}
+          {tab === 'account' && (
+            <div>
+              <div style={{ marginBottom:20 }}>
+                <h1 style={{ color:T.text, fontSize:22, fontWeight:700, margin:0 }}>Mi cuenta</h1>
+              </div>
+              <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+                <div style={{ ...card, padding:20 }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:16 }}>
+                    <div style={{ width:48, height:48, borderRadius:12, background:T.accentBg, border:T.borderTeal, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                      <User size={22} color={T.accent}/>
+                    </div>
+                    <div>
+                      <p style={{ color:T.text, fontSize:15, fontWeight:600, margin:0 }}>{user?.email}</p>
+                      <span style={{ display:'inline-flex', alignItems:'center', gap:5, marginTop:4, background:planCfg.bg, border:`1px solid ${planCfg.border}`, color:planCfg.color, fontSize:11, fontWeight:700, padding:'2px 9px', borderRadius:20 }}>
+                        {planCfg.icon} Plan {planCfg.label}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
+                    {[
+                      { label:'Proyectos', value:`${projects.length}${typeof planCfg.limit==='number' ? '/'+planCfg.limit : '/∞'}` },
+                      { label:'Parte horario', value: planCfg.canHourly ? 'Disponible' : 'No incluido' },
+                      { label:'Análisis IA', value:'Incluido' },
+                    ].map((s, i) => (
+                      <div key={i} style={{ padding:'12px 14px', borderRadius:T.rSm, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)' }}>
+                        <p style={{ color:T.muted, fontSize:11, margin:'0 0 4px', textTransform:'uppercase', letterSpacing:'0.06em' }}>{s.label}</p>
+                        <p style={{ color:T.text, fontSize:15, fontWeight:700, margin:0 }}>{s.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <button onClick={async () => { await logout(); navigate('/') }}
+                  style={{ ...btnGhost, padding:'11px 18px', justifyContent:'center', color:'#f87171', borderColor:'rgba(239,68,68,0.2)' }}>
+                  <LogOut size={15}/> Cerrar sesión
+                </button>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
 
       <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-        main p, main li, main span { max-width: none; }
-        main button { font: inherit; }
-        * { box-sizing: border-box; }
-        ::-webkit-scrollbar { width: 5px; }
-        ::-webkit-scrollbar-track { background: #07111f; }
-        ::-webkit-scrollbar-thumb { background: rgba(34,211,238,0.25); border-radius: 99px; }
-        @media (max-width: 900px) {
-          aside { display: none !important; }
-          main { padding: 20px 16px 72px !important; }
-        }
+        @keyframes spin    { to { transform: rotate(360deg); } }
+        @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+        *{ box-sizing:border-box; }
+        ::-webkit-scrollbar{ width:6px; height:6px; }
+        ::-webkit-scrollbar-track{ background:transparent; }
+        ::-webkit-scrollbar-thumb{ background:rgba(255,255,255,0.1); border-radius:3px; }
+        ::-webkit-scrollbar-thumb:hover{ background:rgba(79,152,163,0.4); }
+        input[type="date"]::-webkit-calendar-picker-indicator{ filter:invert(0.5); cursor:pointer; }
       `}</style>
     </div>
   )
 }
-

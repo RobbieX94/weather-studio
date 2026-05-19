@@ -1,17 +1,16 @@
 // src/components/ExportPDFButton.tsx
-// Genera PDFs y los sube a Supabase Storage + registra en historial.
+// Genera PDFs y los registra en historial (solo plan Studio sube a Storage).
 // Narrativa Gemini con fallback numérico si la API falla.
 
 import React, { useState } from 'react'
-import { FileText, Clock, Loader } from 'lucide-react'
+import { FileText, Clock, Loader, Download, Cloud } from 'lucide-react'
 import type { AiAnalysis, HourlySlot } from './ProjectForecastView'
-import { registerPdfInHistory } from './PdfHistoryPanel'
-import { supabase } from '../lib/supabase'
+import { supabase } from '../services/supabase'
 
-// ── Tipos del proyecto ────────────────────────────────────────────────────────
+// ── Tipos ─────────────────────────────────────────────────────────────────────
 
 export interface Project {
-  id: string
+  id: string | number
   name: string
   location: string
   lat?: number
@@ -38,6 +37,60 @@ async function loadJsPDF(): Promise<any> {
     document.head.appendChild(s)
   })
   return (window as any).jspdf.jsPDF
+}
+
+// ── Blob → base64 (para enviar al backend) ───────────────────────────────────
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const buffer = await blob.arrayBuffer()
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
+  return btoa(binary)
+}
+
+// ── Registrar en historial via API (solo Studio) ──────────────────────────────
+
+async function registerInHistory(
+  token: string,
+  metadata: {
+    project_id?: string | number
+    project_name: string
+    pdf_type: 'forecast_5d' | 'hourly'
+    filename: string
+    location: string
+    shoot_date: string
+  },
+  blob: Blob
+): Promise<void> {
+  const pdf_base64 = await blobToBase64(blob)
+
+  const res = await fetch('/api/pdf-history', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ ...metadata, pdf_base64 }),
+  })
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    // Si el error es 403 (no es Studio) lo ignoramos silenciosamente
+    if (res.status !== 403) {
+      console.warn('[PDF History] Error al registrar:', err.error ?? res.status)
+    }
+  }
+}
+
+// ── Helper: sesión actual ─────────────────────────────────────────────────────
+
+async function getSession(): Promise<{ userId: string | null; token: string | null }> {
+  const { data } = await supabase.auth.getSession()
+  return {
+    userId: data.session?.user.id ?? null,
+    token: data.session?.access_token ?? null,
+  }
 }
 
 // ── Fetch forecast hora a hora desde Tomorrow.io ──────────────────────────────
@@ -98,7 +151,7 @@ async function fetchHourly(project: Project, date: string): Promise<HourlySlot[]
   })
 }
 
-// ── Generar narrativa Gemini (con fallback numérico) ─────────────────────────
+// ── Narrativa Gemini con fallback numérico ────────────────────────────────────
 
 async function generateHourlyNarrative(
   hours: HourlySlot[],
@@ -107,7 +160,6 @@ async function generateHourlyNarrative(
 ): Promise<string[]> {
   const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY
 
-  // Fallback: texto generado directamente desde los datos sin IA
   const buildFallback = () =>
     hours.map(h => {
       const windDesc =
@@ -137,10 +189,7 @@ async function generateHourlyNarrative(
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   })
   const hoursText = hours
-    .map(
-      h =>
-        `${h.time}: ${h.description}, temp=${h.temp}°C (sens.=${h.feelsLike}°C), viento=${h.windSpeed}km/h dir=${h.windDir}°, lluvia=${h.precipitation}%, humedad=${h.humidity}%, nubes=${h.cloudCover}%, UV=${h.uvIndex}, riesgo=${h.riesgo}`
-    )
+    .map(h => `${h.time}: ${h.description}, temp=${h.temp}°C (sens.=${h.feelsLike}°C), viento=${h.windSpeed}km/h dir=${h.windDir}°, lluvia=${h.precipitation}%, humedad=${h.humidity}%, nubes=${h.cloudCover}%, UV=${h.uvIndex}, riesgo=${h.riesgo}`)
     .join('\n')
 
   const prompt = `Eres un meteorólogo profesional especializado en producción audiovisual y cinematografía.
@@ -166,59 +215,31 @@ Responde SOLO con un array JSON de strings, uno por hora, sin explicaciones adic
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
       }
     )
-
-    if (!res.ok) {
-      console.warn(`[Gemini] Error HTTP ${res.status} — usando fallback`)
-      return buildFallback()
-    }
-
+    if (!res.ok) { console.warn(`[Gemini] HTTP ${res.status} — fallback`); return buildFallback() }
     const data = await res.json()
-
-    if (data.error) {
-      console.warn('[Gemini] API error:', data.error.message, '— usando fallback')
-      return buildFallback()
-    }
-
+    if (data.error) { console.warn('[Gemini] API error — fallback'); return buildFallback() }
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
-    if (!raw) {
-      console.warn('[Gemini] Respuesta vacía — usando fallback')
-      return buildFallback()
-    }
-
-    const cleaned = raw
-      .replace(/```json\n?/g, '')
-      .replace(/```\n?/g, '')
-      .trim()
-
+    if (!raw) { console.warn('[Gemini] Vacío — fallback'); return buildFallback() }
+    const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
     const parsed: string[] = JSON.parse(cleaned)
-
-    // Validar que sea un array de strings no vacíos
-    if (
-      !Array.isArray(parsed) ||
-      parsed.length === 0 ||
-      !parsed.every(item => typeof item === 'string' && item.length > 5)
-    ) {
-      console.warn('[Gemini] Array inválido — usando fallback')
-      return buildFallback()
+    if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every(i => typeof i === 'string' && i.length > 5)) {
+      console.warn('[Gemini] Array inválido — fallback'); return buildFallback()
     }
-
     return parsed
   } catch (err) {
-    console.warn('[Gemini] Error inesperado — usando fallback:', err)
+    console.warn('[Gemini] Error inesperado — fallback:', err)
     return buildFallback()
   }
 }
 
-// ── Helper: obtener userId actual ─────────────────────────────────────────────
-
-async function getCurrentUserId(): Promise<string | null> {
-  const { data } = await supabase.auth.getSession()
-  return data.session?.user.id ?? null
-}
-
 // ── PDF Forecast 5 días ───────────────────────────────────────────────────────
 
-async function generatePDF5Days(project: Project, ai: AiAnalysis): Promise<void> {
+async function generatePDF5Days(
+  project: Project,
+  ai: AiAnalysis,
+  isStudio: boolean,
+  token: string | null
+): Promise<void> {
   const JsPDF = await loadJsPDF()
   const doc = new JsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const W = 210, M = 16, colW = W - M * 2
@@ -283,7 +304,7 @@ async function generatePDF5Days(project: Project, ai: AiAnalysis): Promise<void>
     sf(riskBg(day.riesgo)); sd(rc); doc.setLineWidth(0.3); doc.roundedRect(M, y, colW, 30, 3, 3, 'FD')
     st(C.text); doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.text(`${day.icon} ${day.label} — ${day.date}`, M + 6, y + 8)
     st(rc); doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.text(day.riesgo.toUpperCase(), W - M - 22, y + 8)
-    const stats = `Tmax: ${day.tempMax}°C Tmin: ${day.tempMin}°C Lluvia: ${day.precipitation}mm Viento: ${day.windSpeed}km/h UV: ${day.uvIndex} Nubes: ${day.cloudCover}%`
+    const stats = `Tmax: ${day.tempMax}°C  Tmin: ${day.tempMin}°C  Lluvia: ${day.precipitation}mm  Viento: ${day.windSpeed}km/h  UV: ${day.uvIndex}  Nubes: ${day.cloudCover}%`
     st(C.muted); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.text(stats, M + 6, y + 16)
     const rec = doc.splitTextToSize(day.recomendacion, colW - 12)
     st(C.text); doc.setFontSize(9); doc.text(rec.slice(0, 1), M + 6, y + 23); y += 36
@@ -314,34 +335,37 @@ async function generatePDF5Days(project: Project, ai: AiAnalysis): Promise<void>
 
   const fileName = `ws-forecast-${project.name.toLowerCase().replace(/\s+/g, '-')}-${new Date().toISOString().slice(0, 10)}.pdf`
 
-  // Guardar localmente
+  // Descarga local inmediata (todos los planes con acceso PDF)
   doc.save(fileName)
 
-  // Subir a Supabase Storage + registrar historial
-  try {
-    const userId = await getCurrentUserId()
-    if (userId) {
+  // Solo Studio: subir a Storage y registrar en historial (30 días)
+  if (isStudio && token) {
+    try {
       const blob = doc.output('blob') as Blob
-      await registerPdfInHistory(userId, {
+      await registerInHistory(token, {
+        project_id: project.id,
         project_name: project.name,
-        report_type: 'forecast_5d',
-        file_name: fileName,
-        storage_path: `${userId}/${fileName}`,
-        date_label: project.shoot_date,
+        pdf_type: 'forecast_5d',
+        filename: fileName,
+        location: project.location,
+        shoot_date: project.shoot_date,
       }, blob)
+    } catch (err) {
+      console.warn('[PDF History] No se pudo subir a historial Studio:', err)
     }
-  } catch (err) {
-    console.warn('[PDF History] No se pudo registrar en historial:', err)
-    // No bloqueamos al usuario — el PDF ya se descargó
   }
 }
 
-// ── PDF Hora a hora con narrativa Gemini ──────────────────────────────────────
+// ── PDF Hora a hora ───────────────────────────────────────────────────────────
 
-async function generatePDFHourly(project: Project, date: string, hours: HourlySlot[]): Promise<void> {
+async function generatePDFHourly(
+  project: Project,
+  date: string,
+  hours: HourlySlot[],
+  isStudio: boolean,
+  token: string | null
+): Promise<void> {
   const JsPDF = await loadJsPDF()
-
-  // Narrativa — con fallback automático si Gemini falla
   const narrative = await generateHourlyNarrative(hours, project.location, date)
 
   const doc = new JsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
@@ -355,10 +379,11 @@ async function generatePDFHourly(project: Project, date: string, hours: HourlySl
     if (y + n > 280) { doc.addPage(); y = 16; sf('#ffffff'); doc.rect(0, 0, W, 297, 'F') }
   }
   const riskC = (r: string) => r === 'alto' ? '#ef4444' : r === 'medio' ? '#f59e0b' : '#10b981'
+  const dateLabel = new Date(date + 'T12:00:00').toLocaleDateString('es-ES', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  })
 
-  const dateLabel = new Date(date + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-
-  // Portada oscura
+  // Portada
   sf('#050d1a'); doc.rect(0, 0, W, 297, 'F')
   st('#06b6d4'); doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text('WEATHER STUDIO', M, 22)
   st('#4a6a8a'); doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.text('Parte Meteorológico Detallado — Hora a Hora', M, 28)
@@ -460,23 +485,25 @@ async function generatePDFHourly(project: Project, date: string, hours: HourlySl
   }
 
   const fileName = `ws-parte-horario-${project.name.toLowerCase().replace(/\s+/g, '-')}-${date}.pdf`
+
+  // Descarga local inmediata
   doc.save(fileName)
 
-  // Subir a Supabase Storage + registrar historial
-  try {
-    const userId = await getCurrentUserId()
-    if (userId) {
+  // Solo Studio: subir a Storage y registrar en historial (30 días)
+  if (isStudio && token) {
+    try {
       const blob = doc.output('blob') as Blob
-      await registerPdfInHistory(userId, {
+      await registerInHistory(token, {
+        project_id: project.id,
         project_name: project.name,
-        report_type: 'hourly',
-        file_name: fileName,
-        storage_path: `${userId}/${fileName}`,
-        date_label: date,
+        pdf_type: 'hourly',
+        filename: fileName,
+        location: project.location,
+        shoot_date: date,
       }, blob)
+    } catch (err) {
+      console.warn('[PDF History] No se pudo subir a historial Studio:', err)
     }
-  } catch (err) {
-    console.warn('[PDF History] No se pudo registrar en historial:', err)
   }
 }
 
@@ -486,10 +513,11 @@ interface Props {
   project: Project
   ai: AiAnalysis
   canHourly: boolean
+  isStudio: boolean        // ← nuevo: true cuando plan === 'studio'
   selectedDate?: string
 }
 
-export function ExportPDFButton({ project, ai, canHourly, selectedDate }: Props) {
+export function ExportPDFButton({ project, ai, canHourly, isStudio = false, selectedDate }: Props) {
   const [loading5d, setLoading5d] = useState(false)
   const [loadingHr, setLoadingHr] = useState(false)
   const [hrStatus, setHrStatus] = useState('')
@@ -497,9 +525,15 @@ export function ExportPDFButton({ project, ai, canHourly, selectedDate }: Props)
 
   async function handle5Days() {
     setLoading5d(true); setShowMenu(false)
-    try { await generatePDF5Days(project, ai) }
-    catch (err) { console.error(err); alert('Error al generar el PDF.') }
-    finally { setLoading5d(false) }
+    try {
+      const { token } = await getSession()
+      await generatePDF5Days(project, ai, isStudio, token)
+    } catch (err) {
+      console.error(err)
+      alert('Error al generar el PDF.')
+    } finally {
+      setLoading5d(false)
+    }
   }
 
   async function handleHourly() {
@@ -509,8 +543,10 @@ export function ExportPDFButton({ project, ai, canHourly, selectedDate }: Props)
     try {
       const hours = await fetchHourly(project, date)
       setHrStatus('Gemini redactando parte narrativo...')
-      await generatePDFHourly(project, date, hours)
-      setHrStatus('')
+      const { token } = await getSession()
+      await generatePDFHourly(project, date, hours, isStudio, token)
+      setHrStatus(isStudio ? '✓ PDF guardado en tu historial Studio (30 días)' : '')
+      if (isStudio) setTimeout(() => setHrStatus(''), 3000)
     } catch (err) {
       console.error(err)
       alert('Error al generar el parte horario.')
@@ -522,6 +558,7 @@ export function ExportPDFButton({ project, ai, canHourly, selectedDate }: Props)
 
   return (
     <div style={{ position: 'relative', display: 'inline-block' }}>
+      {/* Status bar (Studio upload feedback) */}
       {loadingHr && hrStatus && (
         <div style={{
           position: 'absolute', bottom: '100%', left: 0, marginBottom: 8,
@@ -534,6 +571,7 @@ export function ExportPDFButton({ project, ai, canHourly, selectedDate }: Props)
         </div>
       )}
 
+      {/* Botón principal */}
       <button
         onClick={() => setShowMenu(!showMenu)}
         disabled={loading5d || loadingHr}
@@ -545,17 +583,22 @@ export function ExportPDFButton({ project, ai, canHourly, selectedDate }: Props)
           cursor: loading5d || loadingHr ? 'wait' : 'pointer',
         }}
       >
-        {loading5d || loadingHr ? <Loader size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <FileText size={14} />}
+        {loading5d || loadingHr
+          ? <Loader size={14} style={{ animation: 'spin 1s linear infinite' }} />
+          : <FileText size={14} />
+        }
         {loading5d ? 'Generando 5 días...' : loadingHr ? 'Generando horario...' : 'Exportar PDF ▾'}
       </button>
 
+      {/* Dropdown menú */}
       {showMenu && !loading5d && !loadingHr && (
         <div style={{
           position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 50,
           background: '#0f1a2e', border: '1px solid rgba(255,255,255,0.12)',
-          borderRadius: 12, padding: 6, minWidth: 280,
+          borderRadius: 12, padding: 6, minWidth: 300,
           boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
         }}>
+          {/* Opción: Forecast 5 días */}
           <button
             onClick={handle5Days}
             onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.05)')}
@@ -566,11 +609,26 @@ export function ExportPDFButton({ project, ai, canHourly, selectedDate }: Props)
               cursor: 'pointer', border: 'none',
             }}
           >
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#e2eaf5' }}>Forecast general — 5 días</div>
-            <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>Resumen diario con análisis IA + equipamiento</div>
-            <div style={{ fontSize: 10, color: '#3b82f6', marginTop: 3 }}>Plan Básico o superior</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <FileText size={14} color="#3b82f6" />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#e2eaf5' }}>
+                  Forecast general — 5 días
+                </div>
+                <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                  Resumen diario con análisis IA + equipamiento
+                </div>
+                <div style={{ fontSize: 10, color: '#3b82f6', marginTop: 3 }}>
+                  Plan Básico o superior
+                  {isStudio && <span style={{ color: '#8b5cf6', marginLeft: 6 }}>· ☁️ Se guardará 30 días</span>}
+                </div>
+              </div>
+            </div>
           </button>
 
+          <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', margin: '4px 0' }} />
+
+          {/* Opción: Parte hora a hora */}
           <button
             onClick={handleHourly}
             onMouseEnter={e => { if (canHourly) e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
@@ -582,14 +640,41 @@ export function ExportPDFButton({ project, ai, canHourly, selectedDate }: Props)
               opacity: canHourly ? 1 : 0.5,
             }}
           >
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#e2eaf5' }}>
-              Parte hora a hora{selectedDate ? ` — ${selectedDate}` : ''}
-            </div>
-            <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>Narrativa Gemini + tabla 24h + riesgo por franja</div>
-            <div style={{ fontSize: 10, color: canHourly ? '#06b6d4' : '#ef4444', marginTop: 3 }}>
-              {canHourly ? '🤖 Gemini Pro redacta el parte · Freelance Pro ✓' : '🔒 Requiere Freelance Pro o Studio'}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Clock size={14} color={canHourly ? '#06b6d4' : '#64748b'} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#e2eaf5' }}>
+                  Parte hora a hora{selectedDate ? ` — ${selectedDate}` : ''}
+                </div>
+                <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                  Narrativa Gemini + tabla 24h + riesgo por franja
+                </div>
+                <div style={{ fontSize: 10, marginTop: 3, color: canHourly ? '#06b6d4' : '#ef4444' }}>
+                  {canHourly
+                    ? <>🤖 Gemini Pro redacta el parte · Freelance Pro ✓{isStudio && <span style={{ color: '#8b5cf6', marginLeft: 6 }}>· ☁️ Se guardará 30 días</span>}</>
+                    : '🔒 Requiere Freelance Pro o Studio'
+                  }
+                </div>
+              </div>
             </div>
           </button>
+
+          {/* Badge Studio */}
+          {isStudio && (
+            <div style={{
+              margin: '6px 6px 2px',
+              padding: '6px 10px',
+              borderRadius: 8,
+              background: 'rgba(139,92,246,0.08)',
+              border: '1px solid rgba(139,92,246,0.2)',
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              <Cloud size={11} color="#8b5cf6" />
+              <span style={{ fontSize: 10, color: '#a78bfa', fontWeight: 700 }}>
+                Plan Studio · PDFs guardados 30 días en tu historial
+              </span>
+            </div>
+          )}
         </div>
       )}
 
